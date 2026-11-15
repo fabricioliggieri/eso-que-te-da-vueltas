@@ -43,6 +43,10 @@ RESPUESTAS = {
         "Por hoy ya respondí todas las preguntas que puedo. Volvé mañana.\n"
         "Si querés, te mando las lunas de cada mes por mail."
     ),
+    # Tope por hora (PREGUNTA_TOPE_HORA), desde el 15/11/2026: no es «volvé mañana»; la pregunta no se descontó.
+    "tope_hora": (
+        "Ahora estoy respondiendo muchas preguntas. Volvé en un rato: esta no se descontó."
+    ),
     "revisor": (
         "Esta vez no te pude leer bien. Probá con otra forma de preguntar, más tuya y más corta."
     ),

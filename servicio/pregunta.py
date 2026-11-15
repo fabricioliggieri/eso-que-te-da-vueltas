@@ -90,7 +90,8 @@ def responder(datos: dict, escribir, revisar, con, ahora: datetime | None = None
                             respuesta_mostrada=filtros.RESPUESTAS["crisis"], tipo="crisis", regla="R6", alerta=True)
             return {"texto": filtros.RESPUESTAS["crisis"], "estado": "crisis", "registro": registro}
     if not res["ok"]:
-        clave = "email_10_dias" if res["motivo"] == "email_10_dias" else "tope"
+        # Desde el 15/11/2026, el tope por hora tiene su propio aviso («volvé en un rato»); IP y día siguen con «tope».
+        clave = res["motivo"] if res["motivo"] in ("email_10_dias", "tope_hora") else "tope"
         prox = res.get("proxima", "")
         prox = f"{prox[8:10]}/{prox[5:7]}" if len(prox) == 10 else prox  # «25/11»
         texto = filtros.RESPUESTAS[clave].format(proxima=prox)
