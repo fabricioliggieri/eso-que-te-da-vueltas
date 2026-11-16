@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-app.py · «Eso que te da vueltas» · servicio HTTP · v0.1 (15/11/2026)
+app.py · «Eso que te da vueltas» · servicio HTTP · v0.2 (16/11/2026: suma /lunas)
 
 Lo llama SOLO n8n, por la red interna de Docker (no tiene puerto afuera ni dirección en Traefik).
 - GET  /salud     → {ok, motor, efemerides}
 - POST /pregunta  → lo que ve la persona + lo que se registra (sin email ni datos de nacimiento)
+- POST /lunas     → alta a «Las lunas de tu mes»: valida email y Turnstile, devuelve huella y token de baja
 
 Variables de entorno (las secretas las escribe Fabricio en el Entorno del proyecto en Hostinger):
   ANTHROPIC_API_KEY      clave de la API (secreta)
@@ -23,7 +24,7 @@ import pytz
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
-import calculo_pregunta, filtros, limites, lugares, modelo, pregunta
+import calculo_pregunta, filtros, limites, lugares, lunas, modelo, pregunta
 
 DATOS = os.environ.get("PREGUNTA_DATOS", os.path.join(os.path.dirname(os.path.abspath(__file__)), "datos"))
 os.makedirs(DATOS, exist_ok=True)
@@ -106,5 +107,27 @@ def preguntar(p: Pedido, x_pregunta_token: str | None = Header(default=None)):
         r["visitante"] = {"huella": limites.huella(limites.normalizar_email(p.email)),
                           "fecha": p.fecha, "hora": p.hora or "", "lugar": p.lugar.strip(),
                           "ultima": datetime.now(TZ_AR).date().isoformat(),
-                          "cantidad": limites.contar(CON_LIM, p.email)}
+                          "cantidad": limites.contar(CON_LIM, p.email),
+                          # Para la pestaña Lunas (v0.2): n8n lo usa solo si la persona marcó las lunas
+                          # y su fila es nueva. La huella de Lunas es la misma que la de Visitantes.
+                          "token_lunas": lunas.token_baja()}
     return r
+
+
+class AltaLunas(BaseModel):
+    email: str = Field(max_length=200)
+    ip: str = Field(default="", max_length=64)
+    turnstile: str = Field(default="", max_length=2048)
+
+
+@app.post("/lunas")
+def alta_lunas(p: AltaLunas, x_pregunta_token: str | None = Header(default=None)):
+    """Alta a «Las lunas de tu mes» desde la placa VI de la web (flujo «Lunas · alta»).
+    Valida el email y Turnstile; devuelve la huella y un token de baja. No guarda nada.
+    No depende de PREGUNTA_ABIERTA: las lunas siguen aunque la pregunta esté cerrada."""
+    _autorizado(x_pregunta_token)
+    if not lunas.email_valido(p.email):
+        return {"estado": "dato", "texto": lunas.TEXTOS["dato"]}
+    if not _turnstile_ok(p.turnstile, p.ip):
+        return {"estado": "turnstile", "texto": lunas.TEXTOS["turnstile"]}
+    return lunas.alta(p.email)
