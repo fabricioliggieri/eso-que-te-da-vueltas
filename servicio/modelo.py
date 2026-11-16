@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-modelo.py · «Eso que te da vueltas» · v0.1 (15/11/2026)
+modelo.py · «Eso que te da vueltas» · v0.2 (16/11/2026: prompt caching del system, 1 hora)
 
 La conexión con la API de Claude (SDK oficial `anthropic`). La clave la pone Fabricio en la
 variable de entorno ANTHROPIC_API_KEY: nunca va en un archivo, en el repo ni en el chat.
@@ -54,16 +54,26 @@ def cliente() -> anthropic.Anthropic:
     return _cliente
 
 
+CACHE_TTL = "1h"  # 16/11/2026: el prompt fijo (motor y reglas) se guarda una hora y se relee a ~0,05× del precio
+
+
 def parametros(modelo: str, system: str, mensaje: str, esquema: dict, effort: str = "low") -> dict:
-    """Los parámetros de una llamada (sirven igual para una llamada suelta o para la API por lotes)."""
-    return {"model": modelo, "max_tokens": 8000, "system": system,
+    """Los parámetros de una llamada (sirven igual para una llamada suelta o para la API por lotes).
+    El system es fijo para todas las personas: va como bloque con cache_control (prompt caching). Lo que
+    cambia en cada pregunta (la carta y la pregunta) va en el mensaje, después del corte, y no se guarda."""
+    return {"model": modelo, "max_tokens": 8000,
+            "system": [{"type": "text", "text": system,
+                        "cache_control": {"type": "ephemeral", "ttl": CACHE_TTL}}],
             "messages": [{"role": "user", "content": mensaje}],
             "output_config": {"effort": effort, "format": {"type": "json_schema", "schema": esquema}}}
 
 
 def leer(respuesta) -> tuple[dict | None, dict]:
     """Devuelve (datos, uso). datos=None si el modelo se negó o se cortó."""
-    uso = {"entrada": respuesta.usage.input_tokens, "salida": respuesta.usage.output_tokens,
+    u = respuesta.usage
+    uso = {"entrada": u.input_tokens, "salida": u.output_tokens,
+           "cache_escrita": getattr(u, "cache_creation_input_tokens", 0) or 0,
+           "cache_leida": getattr(u, "cache_read_input_tokens", 0) or 0,
            "stop": respuesta.stop_reason, "modelo": respuesta.model}
     if respuesta.stop_reason in ("refusal", "max_tokens"):
         return None, uso
