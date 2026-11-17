@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-filtros.py · «Eso que te da vueltas» · v0.1 (15/11/2026) · APROBADO por Fabricio el 15/11/2026 («OK a todo»)
+filtros.py · «Eso que te da vueltas» · v0.2 (17/11/2026) · v0.1 APROBADA por Fabricio el 15/11/2026 («OK a todo»)
+v0.2: la respuesta de crisis suma líneas de otros países, porque la pauta llega a todo el mundo
+hispano (OK de Fabricio, 17/11/2026: «Sí, corregilo»).
 
 Filtros fijos, sin modelo. Corren ANTES de calcular y de llamar a la API:
 largo · crisis (R6) · no-pregunta e inyección (R7) · edad.
@@ -18,8 +20,10 @@ RESPUESTAS = {
     "crisis": (
         "Lo que me escribís importa más que cualquier lectura, y no te voy a contestar con símbolos.\n"
         "Hablá ahora con una persona. En la Argentina, la línea de salud mental del Ministerio de Salud "
-        "atiende gratis las 24 horas: 0800-999-0091. Si estás en peligro ahora, llamá al 911 "
-        "(en Capital, también al 107).\n"
+        "atiende gratis las 24 horas: 0800-999-0091 (si estás en peligro ahora, 911). "
+        "En España: 024. En Chile: *4141. En Estados Unidos: 988 (en español). "
+        "En otro país, buscá la línea del tuyo en findahelpline.com, y si estás en peligro ahora, "
+        "llamá al número de emergencias.\n"
         "Si hay alguien cerca en quien confiás, decile hoy cómo estás. No tenés que poder solo con esto."
     ),
     "no_pregunta": (
