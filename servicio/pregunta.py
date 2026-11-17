@@ -17,8 +17,8 @@ import filtros, limites, calculo_pregunta
 AQUI = os.path.dirname(os.path.abspath(__file__))
 TZ_AR = pytz.timezone("America/Argentina/Buenos_Aires")
 SIN_PUERTA = {"salud", "embarazo", "duelo", "crisis"}
-PROMPT_BRUJO = open(os.path.join(AQUI, "prompts", "brujo_v0.4.md"), encoding="utf-8").read()
-PROMPT_REVISOR = open(os.path.join(AQUI, "prompts", "revisor_v0.2.md"), encoding="utf-8").read()
+PROMPT_BRUJO = open(os.path.join(AQUI, "prompts", "brujo_v0.5.md"), encoding="utf-8").read()
+PROMPT_REVISOR = open(os.path.join(AQUI, "prompts", "revisor_v0.3.md"), encoding="utf-8").read()
 
 # «vas a…» es promesa salvo cuando repite la pregunta o la niega
 # («Preguntás si te vas a…», «no digo qué va a pasar», «ni cuándo vas a…»). El juicio fino es del revisor.
