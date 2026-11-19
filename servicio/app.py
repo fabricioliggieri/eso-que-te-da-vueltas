@@ -138,7 +138,21 @@ def tips_de_la_semana(fecha: str | None = None, x_pregunta_token: str | None = H
         date.fromisoformat(fecha)
     except ValueError:
         raise HTTPException(status_code=400)
-    return tips.tips_semana(fecha)
+    r = tips.tips_semana(fecha)
+    tips.guardar(r)
+    return r
+
+
+@app.get("/tips-semana")
+def tips_guardado(x_pregunta_token: str | None = Header(default=None)):
+    """El último tips de la semana guardado (lo lee la web por n8n). Sin modelo, sin costo."""
+    _autorizado(x_pregunta_token)
+    import tips
+    r = tips.guardado()
+    if r is None:
+        raise HTTPException(status_code=404)
+    publico = {k: r[k] for k in ("semana", "publicar", "tips", "tecnica", "motor", "efemerides") if k in r}
+    return publico
 
 
 class AltaLunas(BaseModel):

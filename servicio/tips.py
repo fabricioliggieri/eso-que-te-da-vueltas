@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-tips.py · «Web · al día» · tips de la semana · v0.1 (19/11/2026)
+tips.py · «Web · al día» · tips de la semana · v0.2 (19/11/2026: se guarda y hasta dos intentos)
 
 Decisiones de Fabricio (19/11/2026): un tips por semana (los lunes, con el cielo de lunes a domingo) y
 «sale solo el tips a la web», sin OK de cada semana, si pasa la revisión.
@@ -101,7 +101,41 @@ def _llamar(system: str, mensaje: str, esquema: dict, modelo_id: str) -> tuple[d
     return modelo.leer(modelo.cliente().messages.create(**modelo.parametros(modelo_id, system, mensaje, esquema)))
 
 
-def tips_semana(fecha_lunes: str) -> dict:
+ARCHIVO = os.path.join(os.environ.get("PREGUNTA_DATOS", os.path.join(AQUI, "datos")), "tips_semana.json")
+
+
+def guardar(r: dict) -> None:
+    """Guarda el tips de la semana en el volumen de datos (se pisa la semana anterior; la historia queda
+    en la planilla que escribe n8n). Escritura atómica: nunca queda un archivo a medias."""
+    sin_uso = {k: v for k, v in r.items() if k != "uso"}
+    os.makedirs(os.path.dirname(ARCHIVO), exist_ok=True)
+    tmp = ARCHIVO + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(sin_uso, f, ensure_ascii=False)
+    os.replace(tmp, ARCHIVO)
+
+
+def guardado() -> dict | None:
+    try:
+        with open(ARCHIVO, encoding="utf-8") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
+
+
+def tips_semana(fecha_lunes: str, intentos: int = 2) -> dict:
+    """Hasta dos intentos: si el primero no pasa la revisión, se escribe otro (en las pruebas del 19/11,
+    1 de 6 lo frenó el revisor). Si ninguno pasa, sale solo la parte técnica."""
+    r = None
+    for i in range(intentos):
+        r = _un_intento(fecha_lunes)
+        r["intento"] = i + 1
+        if r["publicar"]:
+            break
+    return r
+
+
+def _un_intento(fecha_lunes: str) -> dict:
     sem = cielo_hoy.semana(fecha_lunes)
     hs = hechos(sem)
     msg = "<cielo_semana>\n" + json.dumps({"semana": sem["semana"], "retrogrados": sem["retrogrados"],
