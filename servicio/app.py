@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-app.py · «Eso que te da vueltas» · servicio HTTP · v0.2 (16/11/2026: suma /lunas)
+app.py · «Eso que te da vueltas» · servicio HTTP · v0.3 (19/11/2026: suma /cielo y /tips-semana para «Web · al día»)
 
 Lo llama SOLO n8n, por la red interna de Docker (no tiene puerto afuera ni dirección en Traefik).
 - GET  /salud     → {ok, motor, efemerides}
@@ -112,6 +112,33 @@ def preguntar(p: Pedido, x_pregunta_token: str | None = Header(default=None)):
                           # y su fila es nueva. La huella de Lunas es la misma que la de Visitantes.
                           "token_lunas": lunas.token_baja()}
     return r
+
+
+@app.get("/cielo")
+def cielo(fecha: str | None = None, x_pregunta_token: str | None = Header(default=None)):
+    """«Web · al día» (v0.3, 19/11/2026): el cielo de un día, solo datos calculados (sin modelo)."""
+    _autorizado(x_pregunta_token)
+    import cielo_hoy
+    fecha = fecha or datetime.now(TZ_AR).date().isoformat()
+    try:
+        date.fromisoformat(fecha)
+    except ValueError:
+        raise HTTPException(status_code=400)
+    return cielo_hoy.cielo_hoy(fecha)
+
+
+@app.post("/tips-semana")
+def tips_de_la_semana(fecha: str | None = None, x_pregunta_token: str | None = Header(default=None)):
+    """«Web · al día» (v0.3, 19/11/2026): el tips de la semana (lunes a domingo). Lo llama n8n los lunes.
+    Sale solo si pasa la revisión (decisión de Fabricio, 19/11/2026); si no, «publicar» es False."""
+    _autorizado(x_pregunta_token)
+    import tips
+    fecha = fecha or datetime.now(TZ_AR).date().isoformat()
+    try:
+        date.fromisoformat(fecha)
+    except ValueError:
+        raise HTTPException(status_code=400)
+    return tips.tips_semana(fecha)
 
 
 class AltaLunas(BaseModel):
