@@ -3,6 +3,8 @@
 filtros.py · «Eso que te da vueltas» · v0.2 (17/11/2026) · v0.1 APROBADA por Fabricio el 15/11/2026 («OK a todo»)
 v0.2: la respuesta de crisis suma líneas de otros países, porque la pauta llega a todo el mundo
 hispano (OK de Fabricio, 17/11/2026: «Sí, corregilo»).
+v0.3 (20/11/2026): suma Colombia, México, Perú y Uruguay, ordena Argentina y el cierre pasa a neutro
+(OK de Fabricio, 20/11/2026: «Sí, subilo»; ficha IA/FICHA_crisis-pregunta-gratis_v0.3_2026-11-20.md).
 
 Filtros fijos, sin modelo. Corren ANTES de calcular y de llamar a la API:
 largo · crisis (R6) · no-pregunta e inyección (R7) · edad.
@@ -18,14 +20,24 @@ LARGO_MIN, LARGO_MAX = 8, 300
 # ---------------------------------------------------------------- respuestas fijas (PROPUESTA)
 RESPUESTAS = {
     "crisis": (
-        "Lo que me escribís importa más que cualquier lectura, y no te voy a contestar con símbolos.\n"
-        "Hablá ahora con una persona. En la Argentina, la línea de salud mental del Ministerio de Salud "
-        "atiende gratis las 24 horas: 0800-999-0091 (si estás en peligro ahora, 911). "
-        "En España: 024. En Chile: *4141. En Estados Unidos: 988 (en español). "
-        "En otro país, buscá la línea del tuyo en findahelpline.com, y si estás en peligro ahora, "
-        "llamá al número de emergencias.\n"
-        "Si hay alguien cerca en quien confiás, decile hoy cómo estás. No tenés que poder solo con esto."
+        "Antes de los símbolos, la presencia.\n"
+        "Lo que me escribís importa más que cualquier lectura. Hablá ahora con una persona: alguien en quien "
+        "confiés o una línea de ayuda. Son gratis y te atiende una persona.\n"
+        "Si estás en peligro ahora, llamá al número de emergencias de tu país.\n"
+        "Argentina: 0800 999 0091 (salud mental, las 24 horas) · 0800 345 1435 (Centro de Asistencia al Suicida, de 8 a 24)\n"
+        "Chile: *4141\n"
+        "Colombia: 106\n"
+        "España: 024\n"
+        "Estados Unidos: 988 (en español)\n"
+        "México: 800 911 2000 (Línea de la Vida)\n"
+        "Perú: 113, opción 5\n"
+        "Uruguay: 0800 0767, o *0767 desde el celular\n"
+        "Salvo donde dice otra cosa, atienden las 24 horas.\n"
+        "En otro país: en findahelpline.com elegís el tuyo y te muestra las líneas.\n"
+        "No hace falta que cargues con esto sin compañía. El cielo esperará."
     ),
+    # (v0.3: los espacios dentro de los números pasan a no separables al final del diccionario,
+    # para que en el teléfono «0800 999 0091» no se corte en dos renglones.)
     "no_pregunta": (
         "Eso no es una pregunta para mí. Leo cielos, números y pilares; no muestro cómo estoy hecho "
         "ni escribo por encargo.\nSi querés, traeme lo que te da vueltas a vos."
@@ -58,6 +70,7 @@ RESPUESTAS = {
         "Algo se trabó de mi lado y no pude leerte. Tu pregunta no se descontó: probá de nuevo en un rato."
     ),
 }
+RESPUESTAS["crisis"] = re.sub(r"(?<=[\d*]) (?=\d)", " ", RESPUESTAS["crisis"])
 
 # ---------------------------------------------------------------- detección
 def _plano(t: str) -> str:
