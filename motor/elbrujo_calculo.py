@@ -82,7 +82,7 @@ def asegurar_efemerides(descargar: bool = True) -> dict:
                     req = urllib.request.Request(base + nombre, headers={"User-Agent": "ElBrujo/8.8"})
                     with urllib.request.urlopen(req, timeout=60) as r, open(destino, "wb") as f:
                         f.write(r.read())
-                    if os.path.getsize(destino) > 1000:
+                    if os.path.getsize(destino) > 100_000:   # v9.0: un archivo real pesa más de 200 KB
                         break
                     os.remove(destino)
                 except Exception:
@@ -118,6 +118,20 @@ ORBES = {'Sol':8,'Luna':8,'Mercurio':6,'Venus':6,'Marte':6,'Júpiter':6,'Saturno
          'Urano':4,'Neptuno':4,'Plutón':4,'Nodo N':3,'Quirón':4,'Lilith':3}
 
 LAT_LIMITE_TOPOCENTRICO = 66.0   # verificado empíricamente
+
+# v9.0 (D3, D4, D5, D10): convenciones del cálculo, escritas en el núcleo (adenda 8.6.4) y
+# publicadas con cada carta para que cualquiera pueda comparar con otro programa.
+CONVENCIONES = {
+    'zodiaco': 'tropical',
+    'casas': 'Topocéntrico (Polich-Page); Whole Sign por encima de 66° de latitud',
+    'nodo': 'Nodo verdadero',
+    'lilith': 'Luna Negra media (otros programas usan la osculante, que puede diferir unos grados)',
+    'orbes': 'el mayor de los dos cuerpos: Sol y Luna 8°; Mercurio a Saturno 6°; Urano, Neptuno, Plutón y Quirón 4°; Nodo y Lilith 3°',
+    'transitos': 'lentos (Júpiter a Plutón, Nodo y Quirón) 3°; rápidos 2°; Luna 1°',
+    'grados': 'truncados al minuto, como las efemérides impresas',
+    'bazi': 'pilares por términos solares al segundo; día y hora por hora solar local; early-zi; '
+            'escuela clásica, igual en los dos hemisferios',
+}
 
 DOMICILIO = {'Sol':['Leo'],'Luna':['Cáncer'],'Mercurio':['Géminis','Virgo'],
              'Venus':['Tauro','Libra'],'Marte':['Aries','Escorpio'],
@@ -172,10 +186,11 @@ DEUDA_TXT = {13:"pereza pasada — trabajo paciente y constructivo",
 # 2. UTILIDADES
 # ============================================================
 def fmt(g: float) -> str:
-    """Grado → «g°mm' Signo». Redondea al minuto; si el redondeo da 60' y el grado
-    pasa a 30, arrastra al signo siguiente (P2, v8.8.1): 29°59.6' Aries → 0°00' Tauro."""
+    """Grado → «g°mm' Signo». v9.0 (E11): TRUNCA al minuto, como astro.com y las efemérides
+    impresas. Así el signo mostrado es siempre el signo real del planeta (29°59.6' Aries se
+    muestra «29°59' Aries», no «0°00' Tauro» mientras la dignidad usaba Aries)."""
     g %= 360
-    total_min = int(round(g * 60)) % (360 * 60)
+    total_min = int(math.floor(g * 60 + 1e-9)) % (360 * 60)
     i, resto = divmod(total_min, 30 * 60)
     gi, m = divmod(resto, 60)
     return f"{gi}°{m:02d}' {SIGNOS[i]}"
@@ -190,14 +205,17 @@ def casa_de(g: float, cusp) -> int:
             if g >= a or g < b: return i+1
     return 1
 
+_GEO_NOMBRE = {}   # v9.0 (E21): qué lugar encontró de verdad la búsqueda, para declararlo
+
 def geocodificar(lugar: str):
     try:
         url = ("https://nominatim.openstreetmap.org/search?q="
                + urllib.parse.quote(lugar) + "&format=json&limit=1")
-        req = urllib.request.Request(url, headers={"User-Agent": "ElBrujo/8.8"})
+        req = urllib.request.Request(url, headers={"User-Agent": "ElBrujo/9.0", "Accept-Language": "es"})
         with urllib.request.urlopen(req, timeout=15) as r:
             d = json.loads(r.read())
         if d:
+            _GEO_NOMBRE[lugar] = d[0].get("display_name", lugar)
             return float(d[0]["lat"]), float(d[0]["lon"])
     except Exception:
         pass
@@ -219,15 +237,40 @@ def traza_reduccion(n: int):
         pasos.append(n)
     return pasos
 
+def _cumple_en(anio: int, m: int, dd: int) -> date:
+    """Cumpleaños en un año dado. Nacidos el 29/2: en año no bisiesto, el 1/3 (v9.0)."""
+    try:
+        return date(anio, m, dd)
+    except ValueError:
+        return date(anio, 3, 1)
+
+def _edad_cumplida(nac: date, hoy: date) -> int:
+    """Años cumplidos (por cumpleaños, no por días/365,25) (v9.0, E3)."""
+    return hoy.year - nac.year - (1 if hoy < _cumple_en(hoy.year, nac.month, nac.day) else 0)
+
+# v9.0 (E15): letras latinas sin descomposición Unicode, pasadas a su equivalente declarado.
+# Antes se borraban y partían la palabra («Søren» daba Alma 5 y «Soren» 11).
+_TRANSLIT = {'Ø': 'O', 'Æ': 'AE', 'Œ': 'OE', 'Ł': 'L', 'Đ': 'D', 'Ð': 'D', 'Þ': 'TH',
+             'ẞ': 'SS', 'Ĳ': 'IJ', 'İ': 'I', 'Ŋ': 'NG', 'Ħ': 'H', 'Ŧ': 'T'}
+
+def _translit(s: str) -> str:
+    s = s.upper()
+    return "".join(_TRANSLIT.get(c, c) for c in s)
+
+def letras_no_latinas(nombre: str) -> list[str]:
+    """Letras del nombre que no tienen lectura en la tabla pitagórica (otro alfabeto)."""
+    t = unicodedata.normalize("NFD", _translit(nombre).replace("Ñ", "N"))
+    return sorted({c for c in t if unicodedata.category(c).startswith("L") and not ("A" <= c <= "Z")})
+
 def _norm_nombre(s: str) -> str:
-    s = s.upper().replace("Ñ", "\x01")
+    s = _translit(s).replace("Ñ", "\x01")
     s = unicodedata.normalize("NFD", s)
     s = "".join(c for c in s if unicodedata.category(c) != "Mn")
     return re.sub(r"[^A-Z\x01]", "", s).replace("\x01", "Ñ")
 
 def _norm_nombre_palabras(s: str) -> str:
     """Igual que _norm_nombre, pero CONSERVA los límites de palabra (criterio de la Y)."""
-    s = s.upper().replace("Ñ", "\x01")
+    s = _translit(s).replace("Ñ", "\x01")
     s = unicodedata.normalize("NFD", s)
     s = "".join(c for c in s if unicodedata.category(c) != "Mn")
     s = re.sub(r"[^A-Z\x01]", " ", s)
@@ -255,18 +298,47 @@ def _jd(dt_utc: datetime) -> float:
     return swe.julday(dt_utc.year, dt_utc.month, dt_utc.day,
                       dt_utc.hour + dt_utc.minute/60 + dt_utc.second/3600)
 
-def _local_aware(fecha: str, hora: str | None, tz: str) -> datetime:
+def _local_aware(fecha: str, hora: str | None, tz: str, lon: float | None = None,
+                 dst: bool | None = None) -> datetime:
+    """Hora civil → datetime con zona. v9.0:
+    · E6: si la hora se repitió o no existió por un cambio de horario, se usa la lectura
+      `dst` (por defecto False = hora estándar, como hasta v8.9); calcular() detecta el
+      caso con _estado_hora() y publica las dos lecturas.
+    · E10: antes de la hora oficial la base de zonas da la hora media de la CIUDAD
+      cabecera (LMT); con la longitud del lugar se usa la hora media del lugar."""
     naive = datetime.strptime(f"{fecha} {hora or '12:00'}", "%Y-%m-%d %H:%M")
-    return pytz.timezone(tz).localize(naive)
+    z = pytz.timezone(tz)
+    local = z.localize(naive, is_dst=bool(dst))
+    if lon is not None and local.tzname() == 'LMT':
+        from datetime import timezone as _tzc
+        local = naive.replace(tzinfo=_tzc(timedelta(seconds=round(lon * 240.0)), 'LMT del lugar'))
+    return local
 
-def _utc_desde_local(fecha: str, hora: str | None, tz: str) -> datetime:
-    return _local_aware(fecha, hora, tz).astimezone(pytz.UTC)
+def _estado_hora(fecha: str, hora: str | None, tz: str) -> str:
+    """'normal' · 'repetida' (la hora pasó dos veces) · 'inexistente' (el reloj la salteó) ·
+    'lmt' (anterior a la hora oficial). v9.0, E6/E10."""
+    if not hora:
+        return 'normal'
+    naive = datetime.strptime(f"{fecha} {hora}", "%Y-%m-%d %H:%M")
+    z = pytz.timezone(tz)
+    try:
+        loc = z.localize(naive, is_dst=None)
+    except pytz.exceptions.AmbiguousTimeError:
+        return 'repetida'
+    except pytz.exceptions.NonExistentTimeError:
+        return 'inexistente'
+    return 'lmt' if loc.tzname() == 'LMT' else 'normal'
+
+def _utc_desde_local(fecha: str, hora: str | None, tz: str, lon: float | None = None,
+                     dst: bool | None = None) -> datetime:
+    return _local_aware(fecha, hora, tz, lon, dst).astimezone(pytz.UTC)
 
 def _jd_a_local(jd: float, tz: str):
+    # v9.0 (E12): redondeo al minuto con timedelta (antes, entre 23:59:30 y 24:00 UTC,
+    # el minuto 60 llevaba la hora a 24 y se caía).
     y, mo, d, h = swe.revjul(jd)
-    hh = int(h); mm = int(round((h - hh) * 60))
-    if mm == 60: hh, mm = hh + 1, 0
-    utc = pytz.UTC.localize(datetime(y, mo, d, hh, mm))
+    utc = datetime(y, mo, d) + timedelta(minutes=round(h * 60.0))
+    utc = pytz.UTC.localize(utc)
     return utc, utc.astimezone(pytz.timezone(tz))
 
 # ---------- hora solar local (decisión del 28/10/2026, 3.ter) ----------
@@ -277,9 +349,9 @@ def _jd_a_local(jd: float, tz: str):
 # mayoría de las cartas respecto de un cálculo por reloj. Se declara en cada documento.
 CONVENCION_HORA_PILAR = "solar"      # "solar" (canónica) · "reloj" (sólo para auditoría)
 
-def hora_solar_local(fecha: str, hora: str, tz: str, lon: float):
+def hora_solar_local(fecha: str, hora: str, tz: str, lon: float, dst: bool | None = None):
     """Devuelve (datetime solar aparente naive, detalle) para una hora civil en `tz` y `lon`."""
-    local = _local_aware(fecha, hora, tz)
+    local = _local_aware(fecha, hora, tz, lon, dst)
     utc = local.astimezone(pytz.UTC)
     jd = _jd(utc)
     eot = swe.time_equ(jd)
@@ -347,6 +419,8 @@ def astro_jd(jd: float, lat: float, lon: float, sin_hora: bool = False):
     # Luna Negra MEDIA — convención canónica (3.1.bis), mismo flag que el resto.
     gl = swe.calc_ut(jd, swe.MEAN_APOG, flag)[0][0]
     pos['Lilith'] = {'grados': gl % 360, 'retro': False, 'fmt': fmt(gl)}
+    # v9.0 (D5): la osculante solo como referencia publicada (no entra a aspectos ni lectura)
+    _lo = swe.calc_ut(jd, swe.OSCU_APOG, flag)[0][0] % 360
 
     if QUIRON_DISPONIBLE:
         try:
@@ -374,8 +448,10 @@ def astro_jd(jd: float, lat: float, lon: float, sin_hora: bool = False):
     diurna = fortuna = None
     if sin_hora:
         avisos.append("Sin hora de nacimiento: no hay casas, Ascendente, Medio Cielo, "
-                      "Parte de la Fortuna ni rueda natal. Las posiciones por signo y los "
-                      "aspectos son válidos; todo lo que depende de la hora queda fuera.")
+                      "Parte de la Fortuna ni rueda natal. Las posiciones se calcularon al "
+                      "mediodía: los planetas no cambian de signo en el día salvo que se avise, "
+                      "pero la Luna recorre unos 13° en el día, así que su grado y sus aspectos "
+                      "son aproximados (v9.0: se publica su rango).")
     else:
         hsys, sistema = b'T', "Topocéntrico (Polich-Page)"
         if abs(lat) > LAT_LIMITE_TOPOCENTRICO:
@@ -389,6 +465,12 @@ def astro_jd(jd: float, lat: float, lon: float, sin_hora: bool = False):
         for info in pos.values():
             info['casa'] = casa_de(info['grados'], cusps)
         diurna = pos['Sol']['casa'] in (7, 8, 9, 10, 11, 12)
+        if hsys == b'W':
+            # v9.0 (E13): en Whole Sign la casa del Sol no dice si está sobre el horizonte;
+            # se usa la altura real del Sol (carta diurna = Sol arriba del horizonte).
+            _sol = swe.calc_ut(jd, swe.SUN, swe.FLG_SWIEPH)[0]
+            _alt = swe.azalt(jd, swe.ECL2HOR, (lon, lat, 0.0), 0.0, 0.0, (_sol[0], _sol[1], _sol[2]))[1]
+            diurna = _alt > 0
         pf = ((asc + pos['Luna']['grados'] - pos['Sol']['grados']) if diurna
               else (asc + pos['Sol']['grados'] - pos['Luna']['grados'])) % 360
         fortuna = {'grados': pf, 'fmt': fmt(pf), 'casa': casa_de(pf, cusps)}
@@ -405,19 +487,22 @@ def astro_jd(jd: float, lat: float, lon: float, sin_hora: bool = False):
                  'de_secta':    ['Sol','Júpiter','Saturno'] if diurna else ['Luna','Venus','Marte'],
                  'fuera_secta': ['Luna','Venus','Marte'] if diurna else ['Sol','Júpiter','Saturno']}
 
+    for x in (asp := _aspectos(pos)):
+        x['cerrado'] = x['orbe'] <= 4.0           # v9.0 (D4): el anexo publica todos, con su orbe
     return {'sin_hora': sin_hora, 'jd': jd,
+            'convenciones': CONVENCIONES, 'lilith_osculante': fmt(_lo),
             'pos': pos, 'cusp_deg': cusps, 'sistema_casas': sistema,
             'asc_deg': asc, 'mc_deg': mc,
             'asc': fmt(asc) if asc is not None else None,
             'mc': fmt(mc) if mc is not None else None,
             'diurna': diurna, 'secta': secta, 'fortuna': fortuna,
-            'dignidades': dign, 'aspectos': _aspectos(pos),
+            'dignidades': dign, 'aspectos': asp,
             'efemerides': efemerides, 'avisos': avisos}
 
-def astro(fecha: str, hora, lat: float, lon: float, tz: str):
+def astro(fecha: str, hora, lat: float, lon: float, tz: str, dst: bool | None = None):
     """Carta natal (o carta de cualquier fecha local). Idéntica a v8.0 en su salida."""
     sin_hora = not hora
-    utc = _utc_desde_local(fecha, hora, tz)
+    utc = _utc_desde_local(fecha, hora, tz, lon if hora else None, dst)
     out = astro_jd(_jd(utc), lat, lon, sin_hora)
     out.update({'utc': utc, 'tz': tz})
     return out
@@ -469,17 +554,76 @@ def aspectos_cruzados(pos_a: dict, pos_b: dict, ejes_a=None, ejes_b=None,
 # ============================================================
 # 4. NUMEROLOGÍA
 # ============================================================
+def validar_fecha(fecha: str, que: str = "fecha de nacimiento") -> date:
+    """v9.0 (E14): la fecha tiene que existir y estar en el rango de las efemérides."""
+    if not isinstance(fecha, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", fecha.strip()):
+        raise ValueError(f"La {que} «{fecha}» no tiene el formato AAAA-MM-DD (por ejemplo 1990-03-14).")
+    try:
+        f = date.fromisoformat(fecha.strip())
+    except ValueError:
+        raise ValueError(f"La {que} «{fecha}» no existe en el calendario (revisá día y mes).")
+    if not (1800 <= f.year <= 2399):
+        raise ValueError(f"La {que} «{fecha}» está fuera del rango que cubren las efemérides (1800–2399).")
+    return f
+
+def validar_hora(hora) -> None:
+    if hora and not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", str(hora).strip()):
+        raise ValueError(f"La hora «{hora}» no tiene el formato HH:MM de 24 horas (por ejemplo 09:45).")
+
 def numerologia(nombre, fecha: str, fecha_consulta: str | None = None):
+    _nac = validar_fecha(fecha)
     y, m, dd = [int(x) for x in fecha.split("-")]
-    hoy = datetime.strptime(fecha_consulta, "%Y-%m-%d").date() if fecha_consulta else date.today()
+    hoy = validar_fecha(fecha_consulta, "fecha de consulta") if fecha_consulta else date.today()
+    if hoy < _nac:
+        raise ValueError(f"La fecha de consulta ({hoy.isoformat()}) es anterior al nacimiento ({fecha}).")
+    if nombre and letras_no_latinas(nombre):
+        raise ValueError("El nombre tiene letras fuera del alfabeto latino ("
+                         + " ".join(letras_no_latinas(nombre)) + "): la tabla pitagórica no las lee. "
+                         "Pasalo como figura en el documento, en letras latinas.")
+    if nombre and nombre.strip() and not _norm_nombre(nombre):
+        raise ValueError("El nombre no tiene letras: no se puede calcular Alma, Expresión ni Personalidad.")
+    if nombre is not None and not nombre.strip():
+        nombre = None
     avisos, deudas = [], set()
+    # v9.0 (D2, E17): una deuda kármica cuenta solo si es INDIVIDUAL: el día de nacimiento
+    # (13, 14, 16 o 19) y la suma de cada posición núcleo (Camino, Alma, Expresión,
+    # Personalidad). El año solo NO cuenta: lo comparte toda una generación (todos los
+    # nacidos en 1990 llevaban 19). Cada deuda se publica con su posición y su traza.
+    deudas_pos = []
+    def _anotar(deuda, posicion, traza):
+        if deuda:
+            deudas.add(deuda)
+            deudas_pos.append({'deuda': deuda, 'posicion': posicion, 'traza': traza})
 
     dr, d1 = reducir(dd, True, True)
-    mr, d2 = reducir(m,  True, True)
-    yr, d3 = reducir(y,  True, True)
-    camino, d4 = reducir(dr + mr + yr, True, True)
-    for d in (d1, d2, d3, d4):
-        if d: deudas.add(d)
+    mr, _ = reducir(m,  True, True)
+    yr, _ = reducir(y,  True, True)
+    _anotar(d1, 'día de nacimiento', traza_reduccion(dd))
+    suma_camino = dr + mr + yr
+    camino, d4 = reducir(suma_camino, True, True)
+    _anotar(d4, 'Camino de Vida', [suma_camino] + traza_reduccion(suma_camino)[1:])
+
+    # v9.0 (D1): la forma de la casa es la de arriba (día, mes y año reducidos por separado,
+    # conservando 11 y 22, y sumados). Las otras dos formas de la tradición se calculan y,
+    # si dan otro maestro u otra deuda, quedan como OBSERVACIÓN (anexo); al cuerpo entran
+    # solo si las corrobora el Bazi (regla de la casa, 3.bis.12).
+    def _forma(total):
+        tr = traza_reduccion(total)
+        mae = next((x for x in tr if x in MAESTROS), None)
+        deu = next((x for x in tr if x in DEUDAS), None)
+        return {'suma': total, 'traza': tr, 'maestro': mae, 'deuda': deu}
+    f_dig = _forma(sum(int(c) for c in f"{dd}{m}{y}"))
+    f_com = _forma(dd + m + y)
+    camino_formas = {'casa': {'suma': suma_camino, 'traza': [suma_camino] + traza_reduccion(suma_camino)[1:],
+                              'componentes': [dr, mr, yr], 'maestro': camino if camino in MAESTROS else None,
+                              'deuda': d4},
+                     'todos_los_digitos': f_dig, 'dia_mes_anio_completos': f_com}
+    observaciones = []
+    for nom, f in (('todos los dígitos', f_dig), ('día + mes + año completos', f_com)):
+        if f['maestro'] and f['maestro'] != camino_formas['casa']['maestro']:
+            observaciones.append({'tipo': 'maestro', 'valor': f['maestro'], 'forma': nom, 'traza': f['traza']})
+        if f['deuda'] and f['deuda'] not in deudas:
+            observaciones.append({'tipo': 'deuda', 'valor': f['deuda'], 'forma': nom, 'traza': f['traza']})
 
     nucleo = {'camino': camino}
     if nombre:
@@ -496,7 +640,8 @@ def numerologia(nombre, fecha: str, fecha_consulta: str | None = None):
             v, d = reducir(suma(modo), True, True)
             nucleo[clave] = v
             nucleo[clave + '_bruto'] = suma(modo)
-            if d: deudas.add(d)
+            _anotar(d, {'alma': 'Alma', 'expresion': 'Expresión', 'personalidad': 'Personalidad'}[clave],
+                    traza_reduccion(suma(modo)))
         presentes = {TABLA[c] for c in nn if c in TABLA}
         nucleo['lecciones'] = [k for k in range(1, 10) if k not in presentes]
         y_vocal = []
@@ -528,13 +673,24 @@ def numerologia(nombre, fecha: str, fecha_consulta: str | None = None):
     dR, mR, yR = reducir(dd)[0], reducir(m)[0], reducir(y)[0]
     p1, _ = reducir(mR + dR); p2, _ = reducir(dR + yR)
     p3, _ = reducir(p1 + p2); p4, _ = reducir(mR + yR)
+    # v9.0 (E16): eco oculto (3.bis.9) en toda posición no núcleo, no solo en la Madurez.
+    ecos = {}
+    for nom, tot in (('P1', mR + dR), ('P2', dR + yR), ('P3', p1 + p2), ('P4', mR + yR)):
+        e = next((x for x in traza_reduccion(tot)[:-1] if x in MAESTROS), None)
+        if e: ecos[nom] = {'eco': e, 'traza': traza_reduccion(tot)}
     fin1 = 36 - camino                      # la DURACIÓN sí usa el maestro (3.bis.5)
+    # v9.0 (E3): tramos sin hueco. 'desde' es el cumpleaños en que empieza (incluido) y
+    # 'hasta' el cumpleaños en que empieza el siguiente (excluido): P1 [0, 36−C),
+    # P2 [36−C, 45−C), P3 [45−C, 54−C), P4 desde 54−C. Se comparan con años cumplidos.
     pinaculos = [
         {'n':1,'valor':p1,'desde':0,         'hasta':fin1},
-        {'n':2,'valor':p2,'desde':fin1+1,    'hasta':fin1+9},
-        {'n':3,'valor':p3,'desde':fin1+10,   'hasta':fin1+18},
-        {'n':4,'valor':p4,'desde':fin1+19,   'hasta':None},
+        {'n':2,'valor':p2,'desde':fin1,      'hasta':fin1+9},
+        {'n':3,'valor':p3,'desde':fin1+9,    'hasta':fin1+18},
+        {'n':4,'valor':p4,'desde':fin1+18,   'hasta':None},
     ]
+    if (m, dd) == (2, 29):
+        avisos.append("Nacimiento el 29/2: en los años no bisiestos el cumpleaños numerológico "
+                      "se toma el 1/3, y ahí cambian el Año Personal y los Pináculos.")
     des = [reducir(abs(mR-dR))[0], reducir(abs(dR-yR))[0]]
     des.append(reducir(abs(des[0]-des[1]))[0]); des.append(reducir(abs(mR-yR))[0])
 
@@ -545,23 +701,44 @@ def numerologia(nombre, fecha: str, fecha_consulta: str | None = None):
                       f"de {hoy.year - 1}; cambia el {dd}/{m}.")
     mp, _ = reducir(ap + hoy.month)
     dp, _ = reducir(mp + hoy.day)
+    _y_ciclo = hoy.year if (hoy.month, hoy.day) >= (m, dd) else hoy.year - 1
+    _tot_ap = reducir(dd)[0] + reducir(m)[0] + reducir(_y_ciclo)[0]
+    _e = next((x for x in traza_reduccion(_tot_ap)[:-1] if x in MAESTROS), None)
+    if _e: ecos['Año Personal'] = {'eco': _e, 'traza': traza_reduccion(_tot_ap)}
+    if nucleo.get('madurez_eco'):
+        ecos['Madurez'] = {'eco': nucleo['madurez_eco'], 'traza': nucleo['madurez_traza']}
 
     return {**nucleo,
             'pinaculos': pinaculos, 'desafios': des,
             'anio_personal': ap, 'mes_personal': mp, 'dia_personal': dp,
             'deudas': sorted(deudas), 'deudas_txt': {d: DEUDA_TXT[d] for d in sorted(deudas)},
+            'deudas_por_posicion': deudas_pos, 'ecos': ecos,
+            'camino_formas': camino_formas, 'observaciones': observaciones,
             'avisos': avisos}
 
 # ============================================================
 # 5. BAZI
 # ============================================================
+_JQ_CACHE = {}
+
 def _jieqi_utc(anios):
+    """Términos solares (jieqi) en UTC, al segundo. v9.0 (E5): sxtwl solo da el índice y una
+    primera aproximación; el instante exacto sale de Swiss Ephemeris (solcross_ut sobre la
+    longitud del término: 270° + 15° × índice). Hasta v8.9 se truncaban los segundos y cada
+    término quedaba hasta 59 s antes: en un nacimiento a menos de un minuto del cruce cambiaba
+    el mes y, en el Lichun, el año."""
     out = []
     for a in anios:
-        for jq in sxtwl.getJieQiByYear(a):
-            t = sxtwl.JD2DD(jq.jd)
-            cst = datetime(int(t.Y), int(t.M), int(t.D), int(t.h), int(t.m))
-            out.append((cst - timedelta(hours=8), jq.jqIndex))
+        if a not in _JQ_CACHE:
+            fila = []
+            for jq in sxtwl.getJieQiByYear(a):
+                lon_t = (270.0 + 15.0 * jq.jqIndex) % 360.0
+                jd = swe.solcross_ut(lon_t, jq.jd - 8.0 / 24.0 - 1.0, swe.FLG_SWIEPH)
+                y_, m_, d_, h_ = swe.revjul(jd)
+                t = datetime(y_, m_, d_) + timedelta(seconds=round(h_ * 3600.0, 1))
+                fila.append((t, jq.jqIndex))
+            _JQ_CACHE[a] = fila
+        out.extend(_JQ_CACHE[a])
     return sorted(out)
 
 def _pilar_hora(tronco_dia: int, hh: int):
@@ -569,21 +746,21 @@ def _pilar_hora(tronco_dia: int, hh: int):
     return ((tronco_dia * 2 + hb) % 10, hb)
 
 def bazi(fecha: str, hora, tz: str, lon: float | None = None,
-         convencion: str | None = None):
+         convencion: str | None = None, _alterna: bool = False, dst: bool | None = None):
     """Cuatro Pilares. Año y mes por el instante UTC contra los términos solares; día y hora
     por la HORA SOLAR LOCAL (3.ter, decisión 28/10/2026) cuando hay hora y longitud. Sin
     longitud cae a hora de reloj y lo declara."""
     convencion = convencion or CONVENCION_HORA_PILAR
     sin_hora = not hora
     y, m, dd = [int(x) for x in fecha.split("-")]
-    local = _local_aware(fecha, hora, tz)
+    local = _local_aware(fecha, hora, tz, lon if hora else None, dst)
     utc = local.astimezone(pytz.UTC).replace(tzinfo=None)
     avisos = []
     # Hora base para día y hora: solar si se puede, reloj si no.
     hora_pilar = None
     if not sin_hora:
         if convencion == "solar" and lon is not None:
-            solar_dt, det = hora_solar_local(fecha, hora, tz, lon)
+            solar_dt, det = hora_solar_local(fecha, hora, tz, lon, dst)
             base_fecha, base_hh = solar_dt.date(), solar_dt.hour
             hora_pilar = {'convencion': 'hora solar local aparente', **det}
         else:
@@ -616,8 +793,7 @@ def bazi(fecha: str, hora, tz: str, lon: float | None = None,
                           "se determinó por el instante real, no por la fecha calendaria. "
                           "Otros calculadores pueden diferir.")
     else:
-        avisos.append("Sin hora de nacimiento: si el nacimiento cayó el día de un término solar, "
-                      "el pilar de mes es aproximado (ventana de ±12 h).")
+        pass   # v9.0 (D6): calcular() revisa el día entero y avisa solo si algo cambia
 
     f_local = base_fecha if not sin_hora else date(y, m, dd)
     if not sin_hora and base_hh >= 23:
@@ -637,11 +813,13 @@ def bazi(fecha: str, hora, tz: str, lon: float | None = None,
                                    else int(hora.split(":")[1]))
         dist = min(abs(base_min - b) for b in range(60, 24 * 60 + 60, 120))
         hora_pilar['minutos_al_borde_de_franja'] = int(dist)
-        if dist <= 10:
-            hora_pilar['pilar_hora_si_cruza'] = f"{TRONCOS[_pilar_hora(dG.tg, (base_hh + (1 if (base_min % 120) >= 60 else -1)) % 24)[0]][0]} {RAMAS[_pilar_hora(dG.tg, (base_hh + (1 if (base_min % 120) >= 60 else -1)) % 24)[1]][0]}"
-            avisos.append(f"La hora de nacimiento cae a {int(dist)} minutos del borde de una franja "
-                          f"horaria china: unos minutos de diferencia cambian el pilar de hora "
-                          f"({hora_pilar['pilar_hora_si_cruza']}). Conviene confirmar la hora exacta.")
+        # v9.0 (E9): el borde está ADELANTE si los minutos dentro del bloque de 2 h (que
+        # arranca en hora par) son < 60, y ATRÁS si son ≥ 60. Hasta v8.9 el signo estaba
+        # invertido y el aviso nombraba el pilar que ya tenía. Ahora se recalcula la carta
+        # entera del otro lado del borde (hora, día por early-zi y elemento útil, 2.3).
+        cruce = None
+        if dist <= 10 and not _alterna:
+            cruce = (1 if (base_min % 120) < 60 else -1, int(dist))
         # Contraste declarado: qué habría dado la hora de reloj (para el anexo y el aviso).
         if hora_pilar['convencion'].startswith('hora solar'):
             f_rel = date(y, m, dd); hh_rel = int(hora.split(":")[0])
@@ -708,8 +886,12 @@ def bazi(fecha: str, hora, tz: str, lon: float | None = None,
     if excedente:
         descartados = [c for c in candidatos if NUTRE[excedente] == c]
         candidatos = [c for c in candidatos if c not in descartados]
-        if fuerte and CONTROLA[excedente] not in candidatos:
-            candidatos.append(CONTROLA[excedente])
+        # v9.0 (D7): la regla de no nutrir al fuerte manda sobre la del excedente. Si el que
+        # controla al excedente es el propio elemento del Día Maestro o su recurso, no se suma
+        # (en 9 de 18.844 cartas le recetaba a un Día Maestro fuerte su propio sostén).
+        _ctrl = CONTROLA[excedente]
+        if fuerte and _ctrl not in candidatos and _ctrl not in (el_dm, NUTRE[el_dm]):
+            candidatos.append(_ctrl)
         if not candidatos:
             candidatos = list(candidatos_base)
             vacio_por_descarte = True
@@ -758,7 +940,7 @@ def bazi(fecha: str, hora, tz: str, lon: float | None = None,
                 'polaridad': TRONCOS[t[0]][3], 'animal': RAMAS[t[1]][2],
                 'elemento_rama': RAMAS[t[1]][3]}
 
-    return {'sin_hora': sin_hora, 'anio_bazi': anio_bazi,
+    res = {'sin_hora': sin_hora, 'anio_bazi': anio_bazi,
             'pilar_anio': gz(pilares[0]), 'pilar_mes': gz(pilares[1]),
             'pilar_dia': gz(pilares[2]),
             'pilar_hora': gz(pilar_hora) if pilar_hora else None,
@@ -775,10 +957,68 @@ def bazi(fecha: str, hora, tz: str, lon: float | None = None,
                               f"corregido por estación ({umbral}). El balance que se "
                               "muestra es la cuenta plana, verificable a mano."),
             'relaciones': rel, 'avisos': avisos}
+    if not sin_hora and not _alterna and cruce:
+        signo, dmin = cruce
+        otro = (local.astimezone(pytz.UTC) + timedelta(minutes=signo * (dmin + 1))).astimezone(pytz.timezone(tz))
+        alt = bazi(otro.strftime("%Y-%m-%d"), otro.strftime("%H:%M"), tz, lon, convencion, _alterna=True)
+        hora_pilar['pilar_hora_si_cruza'] = alt['pilar_hora']['ganzhi']
+        hora_pilar['del_otro_lado'] = {
+            'hora_reloj': otro.strftime("%H:%M"), 'pilar_hora': alt['pilar_hora']['ganzhi'],
+            'pilar_dia': alt['pilar_dia']['ganzhi'], 'dia_maestro': alt['dia_maestro']['descripcion'],
+            'elemento_util': alt['elemento_util'],
+            'cambia_dia': alt['pilar_dia']['ganzhi'] != res['pilar_dia']['ganzhi'],
+            'cambia_util': alt['elemento_util'] != util}
+        o = hora_pilar['del_otro_lado']
+        extra = []
+        if o['cambia_dia']: extra.append(f"también el Día Maestro ({o['dia_maestro']})")
+        if o['cambia_util']: extra.append(f"y el elemento que te hace bien ({o['elemento_util']})")
+        avisos.append(f"La hora de nacimiento cae a {dmin} minutos del borde de una franja horaria "
+                      f"china: unos minutos {'después' if signo > 0 else 'antes'} el pilar de hora "
+                      f"sería {o['pilar_hora']}" + ((", y cambiaría " + " ".join(extra)) if extra else "")
+                      + ". Conviene confirmar la hora exacta.")
+    return res
 
 # ============================================================
 # 6. ENTRADA ÚNICA
 # ============================================================
+# v9.0 (D11) · REGLA DE LA CASA (Fabricio, 22/11/2026): «la casa toma como fórmula el sistema
+# bazi, y si el sistema bazi lo corrobora la casa también, porque existe un fundamento».
+# Un dato de los números que el motor publica solo como OBSERVACIÓN (otra forma de sumar el
+# Camino) entra al cuerpo de la lectura solo si el Bazi de la carta dice lo mismo. La tabla
+# es fija y la calcula el motor, para que cualquiera la pueda revisar (como la de la Y).
+# Proporciones sobre el balance ponderado por pilar.
+def _partes(b):
+    tot = sum(b['balance_ponderado'].values()) or 1
+    return {e: v / tot for e, v in b['balance_ponderado'].items()}
+
+def corrobora_bazi(deuda: int, b: dict) -> dict:
+    el = b['dia_maestro']['elemento']; pt = _partes(b); fuerte = b['dm_fuerte']
+    expresion = DRENA[el]                                   # lo que el Día Maestro produce
+    poder = CONTROLA[el]                                     # lo que controla al Día Maestro
+    riqueza = next(e for e in ELEMENTOS if CONTROLA[e] == el)  # lo que el Día Maestro controla
+    pct = lambda e: f"{e} {100 * pt[e]:.0f} %"
+    if deuda == 13:      # trabajo paciente: Día Maestro débil y poca expresión/obra
+        ok = (not fuerte) and pt[expresion] <= 0.10
+        crit = "Día Maestro débil y el elemento de la obra (lo que el Día Maestro produce) en 10 % o menos"
+        dato = f"Día Maestro {b['dia_maestro']['descripcion']} {'fuerte' if fuerte else 'débil'}; {pct(expresion)}"
+    elif deuda == 14:    # moderación: un elemento en exceso
+        top = max(pt, key=pt.get)
+        ok = pt[top] > 0.35
+        crit = "un elemento por encima del 35 % de la carta (exceso)"
+        dato = f"el más pesado: {pct(top)}"
+    elif deuda == 16:    # caída del ego: Día Maestro fuerte y su propio elemento domina
+        top = max(pt, key=pt.get)
+        ok = fuerte and top == el
+        crit = "Día Maestro fuerte y su propio elemento (los compañeros) es el más pesado de la carta"
+        dato = f"Día Maestro {b['dia_maestro']['descripcion']} {'fuerte' if fuerte else 'débil'}; el más pesado: {pct(top)}"
+    elif deuda == 19:    # dar sin esperar: Día Maestro fuerte con riqueza o poder dominantes
+        ok = fuerte and max(pt[riqueza], pt[poder]) >= 0.30
+        crit = "Día Maestro fuerte y el elemento de la riqueza o el del poder en 30 % o más"
+        dato = f"Día Maestro {b['dia_maestro']['descripcion']} {'fuerte' if fuerte else 'débil'}; {pct(riqueza)} (riqueza), {pct(poder)} (poder)"
+    else:
+        return {'corrobora': False, 'criterio': 'sin criterio para este dato', 'dato': ''}
+    return {'corrobora': bool(ok), 'criterio': crit, 'dato': dato}
+
 def _resolver_lugar(datos: dict):
     lat, lon = datos.get('lat'), datos.get('lon')
     if lat is None or lon is None:
@@ -798,18 +1038,106 @@ def _resolver_lugar(datos: dict):
     return lat, lon, tz
 
 def calcular(datos: dict) -> dict:
+    validar_fecha(datos.get('fecha'))
+    validar_hora(datos.get('hora'))
     lat, lon, tz = _resolver_lugar(datos)
     hora = datos.get('hora') or None
-    A = astro(datos['fecha'], hora, lat, lon, tz)
+    dst = datos.get('dst')                 # v9.0 (E6): lectura elegida si la hora es dudosa
+    A = astro(datos['fecha'], hora, lat, lon, tz, dst)
     N = numerologia(datos.get('nombre'), datos['fecha'], datos.get('fecha_consulta'))
-    B = bazi(datos['fecha'], hora, tz, lon)
+    B = bazi(datos['fecha'], hora, tz, lon, dst=dst)
     DY = da_yun(datos['fecha'], hora, tz, datos.get('sexo'),
-                datos.get('nombre_pila') or datos.get('nombre'), lon=lon)
+                datos.get('nombre_pila') or datos.get('nombre'), lon=lon, dst=dst,
+                es_pila=bool(datos.get('nombre_pila')))
+    # v9.0 (E6, E10): la hora de reloj puede no alcanzar para saber el instante.
+    hora_dudosa = None
+    est = _estado_hora(datos['fecha'], hora, tz)
+    if est in ('repetida', 'inexistente') and dst is None:
+        A2 = astro(datos['fecha'], hora, lat, lon, tz, True)
+        B2 = bazi(datos['fecha'], hora, tz, lon, dst=True)
+        def _res(a_, b_):
+            return {'utc': a_['utc'].strftime('%Y-%m-%d %H:%M UTC'), 'asc': a_['asc'], 'mc': a_['mc'],
+                    'luna': a_['pos']['Luna']['fmt'],
+                    'pilar_dia': b_['pilar_dia']['ganzhi'], 'pilar_hora': b_['pilar_hora']['ganzhi'],
+                    'elemento_util': b_['elemento_util']}
+        hora_dudosa = {'tipo': est, 'usada': _res(A, B), 'alternativa': _res(A2, B2),
+                       'como_elegir': "pasar datos['dst']=True para la otra lectura"}
+        txt = ("esa hora pasó dos veces porque esa noche se atrasó el reloj" if est == 'repetida'
+               else "esa hora no existió porque esa noche se adelantó el reloj")
+        cambia = [k for k in ('asc', 'mc', 'luna', 'pilar_dia', 'pilar_hora', 'elemento_util')
+                  if hora_dudosa['usada'][k] != hora_dudosa['alternativa'][k]]
+        nombres = {'asc': 'el Ascendente', 'mc': 'el Medio Cielo', 'luna': 'el grado de la Luna',
+                   'pilar_dia': 'el Día Maestro', 'pilar_hora': 'el pilar de hora', 'elemento_util': 'el elemento útil'}
+        A['avisos'].append(f"Hora de nacimiento dudosa: {txt} en {tz}. Se calculó con la hora estándar "
+                           f"({hora_dudosa['usada']['utc']}); la otra lectura es {hora_dudosa['alternativa']['utc']}"
+                           + (f" y cambia {', '.join(nombres[k] for k in cambia)}" if cambia else " y no cambia nada de lo publicado")
+                           + ". Conviene confirmar con la partida de nacimiento.")
+    # v9.0 (E7, D6): sin hora, se revisa el día entero (00:00 y 23:59 de reloj). Lo que
+    # cambia dentro del día se publica con sus dos posibilidades; lo que no, queda firme.
+    sin_hora_posibles = None
+    if not hora:
+        def _hm(mi): return f"{mi // 60:02d}:{mi % 60:02d}"
+        def _val(mi, clave):
+            h = _hm(mi)
+            if clave in ('pilar_anio', 'pilar_mes', 'pilar_dia'):
+                return bazi(datos['fecha'], h, tz, lon)[clave]['ganzhi']
+            if clave == 'dia_maestro':
+                return bazi(datos['fecha'], h, tz, lon)['dia_maestro']['descripcion']
+            return astro(datos['fecha'], h, lat, lon, tz)['pos'][clave]['fmt'].split(' ', 1)[1]
+        def _tramos(clave):
+            v0, v1 = _val(0, clave), _val(1439, clave)
+            if v0 == v1:
+                return None
+            lo, hi = 0, 1439                      # un solo cambio en el día (bisección al minuto)
+            while hi - lo > 1:
+                mid = (lo + hi) // 2
+                if _val(mid, clave) == v0: lo = mid
+                else: hi = mid
+            return [{'valor': v0, 'desde': '00:00', 'hasta': _hm(hi)},
+                    {'valor': v1, 'desde': _hm(hi), 'hasta': '23:59'}]
+        a0 = astro(datos['fecha'], "00:00", lat, lon, tz); a1 = astro(datos['fecha'], "23:59", lat, lon, tz)
+        cambian = {}
+        for k in list(a0['pos']) + ['pilar_anio', 'pilar_mes', 'pilar_dia', 'dia_maestro']:
+            t = _tramos(k)
+            if t: cambian[k] = t
+        sin_hora_posibles = {'luna_desde': a0['pos']['Luna']['fmt'], 'luna_hasta': a1['pos']['Luna']['fmt'],
+                             'cambian_en_el_dia': cambian}
+        for x in A['aspectos']:
+            if 'Luna' in (x['a'], x['b']):
+                x['aproximado_sin_hora'] = True
+        if cambian:
+            nombres = {'pilar_anio': 'el año chino', 'pilar_mes': 'el mes chino', 'pilar_dia': 'el pilar de día',
+                       'dia_maestro': 'el Día Maestro'}
+            txt = "; ".join(f"{nombres.get(k, k)}: " + " o ".join(f"{t['valor']} (de {t['desde']} a {t['hasta']})" for t in v)
+                            for k, v in cambian.items())
+            A['avisos'].append("Sin hora de nacimiento, hay datos que cambian dentro de ese mismo día y "
+                               f"dependen de la hora: {txt}, en hora de reloj. La lectura toma el valor "
+                               "que rige la mayor parte del día y nombra el otro como posibilidad.")
+    elif est == 'lmt' and hora:
+        A['avisos'].append("Nacimiento anterior a la hora oficial del país: la hora se tomó como "
+                           "hora media del lugar de nacimiento (por su longitud).")
+    # v9.0 (D11): cada observación de deuda lleva si el calendario chino la corrobora.
+    for o in N.get('observaciones', []):
+        if o['tipo'] == 'deuda':
+            o['bazi'] = corrobora_bazi(o['valor'], B)
+            o['entra_al_cuerpo'] = o['bazi']['corrobora']
+        else:
+            o['bazi'] = None; o['entra_al_cuerpo'] = False
+    # v9.0 (D10): escuela clásica en los dos hemisferios, declarada.
+    if lat < 0:
+        B['avisos'].append("El calendario chino se calcula igual en los dos hemisferios: es la escuela "
+                           "clásica. Algunas escuelas modernas invierten las estaciones en el sur; esta no.")
     nivel = ("fecha" if hora is None and not datos.get('nombre') else
              "fecha+nombre" if hora is None else
              "completo" if datos.get('nombre') else "fecha+hora")
-    return {'datos': {**datos, 'lat': lat, 'lon': lon, 'tz': tz},
-            'astro': A, 'num': N, 'bazi': B, 'da_yun': DY, 'nivel': nivel,
+    lugar_txt = (datos.get('lugar') or '').strip()
+    if datos.get('lat') is None and lugar_txt in _GEO_NOMBRE:
+        A['avisos'].append(f"Lugar buscado: «{lugar_txt}». Lugar encontrado: «{_GEO_NOMBRE[lugar_txt]}» "
+                           f"({lat:.4f}, {lon:.4f}). Si no es ese, la hora solar y las casas cambian.")
+    return {'datos': {**datos, 'lat': lat, 'lon': lon, 'tz': tz,
+                      'lugar_encontrado': _GEO_NOMBRE.get(lugar_txt) if datos.get('lat') is None else None},
+            'astro': A, 'num': N, 'bazi': B, 'da_yun': DY, 'nivel': nivel, 'hora_dudosa': hora_dudosa,
+            'sin_hora_posibles': sin_hora_posibles,
             'avisos': A['avisos'] + N['avisos'] + B['avisos']
                       + ([DY['declaracion_sexo']] if DY.get('declaracion_sexo') else []),
             'quiron_disponible': QUIRON_DISPONIBLE, 'efemerides': A['efemerides'],
@@ -832,6 +1160,11 @@ _NOM_F = {
     "juana","francisca","manuela","antonia","carla","barbara",
     "debora","tamara","sara","rebeca","noemi","ester","miriam","perla","celeste","constanza","jazmin",
     "malena","matilda","matilde","amparo","consuelo","socorro","pia","ailen",
+    # v9.0 (D9): ampliación
+    "ines","raquel","ruth","beatriz","lourdes","nieves","marisol","maribel","mariel","abigail",
+    "isabel","rocio","pilar","esperanza","azul","jimena","ximena","guillermina","ludmila",
+    "luciana","bianca","sabrina","vanesa","vanessa","lorena","yesica","jesica","jessica",
+    "karina","carina","marina","agostina","valeria","morena","nerea","noelia","ofelia","estela",
 }
 _NOM_M = {
     "juan","jose","luis","carlos","jorge","miguel","manuel","francisco","javier",
@@ -845,6 +1178,12 @@ _NOM_M = {
     "thiago","valentin","lautaro","dante","enzo","franco","ivan","juanma","julian",
     "leonardo","lorenzo","mateo","maximo","nahuel","octavio","salvador","simon",
     "vicente","fabian","adrian","emanuel","cristian","walter",
+    # v9.0 (D9): ampliación
+    "fabricio","mauro","renzo","gino","aldo","elio","jesus","borja","joshua","josue","isaias","jeremias","kevin","alexander","alex","axel",
+    "brian","jonathan","jonatan","elias","tobias","jonas","ulises","felipe","ramon","alfredo",
+    "arturo","victor","enrique","alfonso","jaime","joel","isaac","abel","noel","samuel","ismael",
+    "nehuen","ciro","gael","ian","liam","noah","benicio","mauricio","patricio","rodolfo","silvio",
+    "teodoro","emilio","dario","marco","marcelino","nestor","omar","pascual","rogelio","wenceslao",
     "esteban","gregorio","ernesto","armando","aurelio","augusto","cesar","efrain",
 }
 _NOM_AMBIGUO = {
@@ -853,15 +1192,18 @@ _NOM_AMBIGUO = {
     "paz","alba","luz","sol","cielo","real","santi","robin","sasha","dylan","milan",
 }
 _A_MASC = {"luca","bautista","nicola","elisha","josua","jeremia","zacarias","matias",
-           "tobias","elias","jonas","lucas","tomas"}
+           "tobias","elias","jonas","lucas","tomas","borja","joshua","nikita"}
 _O_FEM = {"rosario","consuelo","amparo","socorro","carmelo"}
 
 def _sin_tildes(x: str) -> str:
     x = unicodedata.normalize("NFD", x.lower())
     return "".join(c for c in x if unicodedata.category(c) != "Mn")
 
-def sexo_desde_nombre(nombre: str | None):
-    """Deriva el sexo del nombre completo de nacimiento. Devuelve una HIPÓTESIS."""
+def sexo_desde_nombre(nombre: str | None, es_pila: bool = False):
+    """Deriva el sexo del nombre de nacimiento. Devuelve una HIPÓTESIS.
+    v9.0 (E8, D9): el segundo nombre desempata SOLO si el primero es ambiguo (2.1.3) y SOLO
+    si se recibieron los nombres de pila aparte (`es_pila`): en el nombre completo la
+    segunda palabra puede ser un apellido («Ariel Luna» no es mujer)."""
     if not nombre or not nombre.strip():
         return {'sexo': None, 'criterio': 'sin nombre', 'certeza': None,
                 'declaracion': "No se derivó el sexo: falta el nombre completo de nacimiento."}
@@ -872,6 +1214,8 @@ def sexo_desde_nombre(nombre: str | None):
                 'declaracion': "No se derivó el sexo: el nombre no pudo analizarse."}
     for i, w in enumerate(partes[:2]):
         etiqueta = "primer nombre" if i == 0 else "segundo nombre"
+        if i == 1 and not (es_pila and partes[0] in _NOM_AMBIGUO):
+            break
         if w in _NOM_AMBIGUO:
             continue
         for sx, lista in (('F', _NOM_F), ('M', _NOM_M)):
@@ -899,7 +1243,8 @@ def sexo_desde_nombre(nombre: str | None):
             'certeza': None,
             'declaracion': f"No se derivó el sexo: «{partes[0]}» se usa para ambos o no "
                            f"está en las listas. El Da Yun no se calcula y se declara "
-                           f"la ausencia; si el consultante lo aporta, se recalcula."}
+                           f"la ausencia; si el consultante aporta el dato (o sus nombres "
+                           f"de pila aparte, para desempatar con el segundo), se recalcula."}
 
 # ============================================================
 # 7. TIEMPO Y VÍNCULO
@@ -915,13 +1260,14 @@ def anio_bazi_actual(fecha_consulta: str | None = None, tz: str = "UTC"):
     return {'anio': b['anio_bazi'], **b['pilar_anio']}
 
 def da_yun(fecha: str, hora, tz: str, sexo: str | None = None,
-           nombre: str | None = None, n: int = 8, lon: float | None = None):
+           nombre: str | None = None, n: int = 8, lon: float | None = None, dst: bool | None = None,
+           es_pila: bool = False):
     """Pilares de suerte (Da Yun). Dirección por polaridad del año + sexo; edad de
     inicio por distancia real al término solar (3 días = 1 año)."""
     origen = "declarado por el consultante"
     declaracion = None
     if sexo not in ("M", "F"):
-        inf = sexo_desde_nombre(nombre)
+        inf = sexo_desde_nombre(nombre, es_pila)
         sexo, origen, declaracion = inf['sexo'], inf['criterio'], inf['declaracion']
         certeza = inf['certeza']
     else:
@@ -943,9 +1289,9 @@ def da_yun(fecha: str, hora, tz: str, sexo: str | None = None,
                           "la hora de nacimiento. Sin hora se declara ausente (2.3).",
                 'ciclos': []}
 
-    b = bazi(fecha, hora, tz, lon)
+    b = bazi(fecha, hora, tz, lon, dst=dst)
     y, m, dd = [int(x) for x in fecha.split("-")]
-    utc = _utc_desde_local(fecha, hora, tz).replace(tzinfo=None)
+    utc = _utc_desde_local(fecha, hora, tz, lon if hora else None, dst).replace(tzinfo=None)
 
     tronco_anio = next(i for i, t in enumerate(TRONCOS) if t[0] == b['pilar_anio']['tronco'])
     yang = TRONCOS[tronco_anio][3] == "Yang"
@@ -1014,7 +1360,7 @@ def _transitos_sobre(A: dict, T: dict, cusps=None):
     for tp, ti in T['pos'].items():
         if tp in ('Nodo S', 'Lilith'):
             continue
-        lento = tp in LENTOS
+        lento = tp in LENTOS or tp == 'Quirón'     # v9.0 (D4): Quirón se mueve como un lento
         for np_, ng in puntos.items():
             diff = abs(ti['grados'] - ng) % 360
             if diff > 180: diff = 360 - diff
@@ -1183,13 +1529,30 @@ def anio(datos_natal: dict, anio_rs: int, lugar_rs: dict | None = None,
                 pasos.append({**p, 'natal': x['b']})
     pasos.sort(key=lambda p: p['jd'])
 
-    num = numerologia(d.get('nombre'), d['fecha'], desde)   # Año Personal del ciclo que abre
+    # v9.0 (E4): el Año Personal del ciclo que abre se toma en el CUMPLEAÑOS, no en la fecha
+    # local de la RS (que puede caer el día anterior y daría el ciclo viejo).
+    _yn, _mn, _dn = [int(x) for x in d['fecha'].split("-")]
+    num = numerologia(d.get('nombre'), d['fecha'], _cumple_en(anio_rs, _mn, _dn).isoformat())
     yb = anio_bazi_actual(desde, tz)
     return {'natal': nat, 'rs': rs, 'cruz': cruz, 'casas_natales_rs': casas_nat,
             'hitos': hitos, 'lunaciones': lun, 'estaciones': est, 'pasos': pasos,
             'num': num, 'anio_bazi': yb,
             'vigencia': {'desde': desde, 'hasta': fin_local},
             'avisos': avisos, 'version': VERSION}
+
+def _cambio_de_ciclo(nombre, fecha: str, anio_: int, mes_: int):
+    """v9.0: si el cumpleaños cae dentro del mes, el Año Personal cambia a mitad de mes.
+    Devuelve la fecha y los números de antes y de después, o None. El Mes Personal se
+    toma el día 15 (como hasta v8.9) y esto se publica para que nadie lea el ciclo viejo."""
+    _y, m, dd = [int(x) for x in fecha.split("-")]
+    c = _cumple_en(anio_, m, dd)
+    if (c.year, c.month) != (anio_, mes_):
+        return None
+    antes = numerologia(nombre, fecha, (c - timedelta(days=1)).isoformat())
+    despues = numerologia(nombre, fecha, c.isoformat())
+    return {'fecha': c.isoformat(),
+            'anio_personal_antes': antes['anio_personal'], 'mes_personal_antes': antes['mes_personal'],
+            'anio_personal_despues': despues['anio_personal'], 'mes_personal_despues': despues['mes_personal']}
 
 def mes(datos_natal: dict, anio_: int, mes_: int, fechas_muestra: int = 5):
     """Todo lo que necesita «Lectura del mes»: tránsitos muestreados a lo largo del
@@ -1225,6 +1588,7 @@ def mes(datos_natal: dict, anio_: int, mes_: int, fechas_muestra: int = 5):
             'muestras': muestras, 'lunaciones': lun, 'estaciones': est, 'pasos': pasos,
             'bazi_mes': {'pilar_anio': b_mes['pilar_anio'], 'pilar_mes': b_mes['pilar_mes']},
             'anio_personal': num['anio_personal'], 'mes_personal': num['mes_personal'],
+            'cambio_de_ciclo': _cambio_de_ciclo(d.get('nombre'), d['fecha'], anio_, mes_),
             'avisos': nat['avisos'], 'version': VERSION}
 
 def sinastria(datos_a: dict, datos_b: dict):
@@ -1252,12 +1616,26 @@ def sinastria_bazi(datos_a: dict, datos_b: dict):
                 rel['chong'].append({'a': f"{ka}:{RAMAS[ia][2]}", 'b': f"{kb}:{RAMAS[ib][2]}"})
             if par in [tuple(sorted(p)) for p in LIUHE]:
                 rel['liuhe'].append({'a': f"{ka}:{RAMAS[ia][2]}", 'b': f"{kb}:{RAMAS[ib][2]}"})
-    todas = [i for _, i in ra] + [i for _, i in rb]
+    # v9.0 (E19): una combinación es DEL VÍNCULO solo si la arman las dos cartas juntas:
+    # cada una aporta al menos una rama que la otra no tiene. Un trío entero dentro de una
+    # sola carta es de esa persona, no del vínculo. Se informan también las medias
+    # combinaciones entre las dos (3.ter.4 pide distinguirlas).
+    set_a, set_b = {i for _, i in ra}, {i for _, i in rb}
     for trio, el in SANHE:
-        pres = [i for i in trio if i in todas]
-        if len(set(pres)) == 3:
-            rel['sanhe'].append({'elemento': el, 'completa': True,
-                                 'ramas': [RAMAS[i][2] for i in trio]})
+        en_a = set(trio) & set_a; en_b = set(trio) & set_b
+        juntas = en_a | en_b
+        if not en_a or not en_b or not (en_a - en_b) or not (en_b - en_a):
+            continue
+        if len(juntas) == 3:
+            rel['sanhe'].append({'elemento': el, 'completa': True, 'tipo': 'Sanhé (trío) entre las dos cartas',
+                                 'ramas': [RAMAS[i][2] for i in trio],
+                                 'aporta_a': [RAMAS[i][2] for i in sorted(en_a)],
+                                 'aporta_b': [RAMAS[i][2] for i in sorted(en_b)]})
+        elif len(juntas) == 2:
+            rel['sanhe'].append({'elemento': el, 'completa': False, 'tipo': 'media combinación (Banhe) entre las dos cartas',
+                                 'ramas': [RAMAS[i][2] for i in sorted(juntas)],
+                                 'aporta_a': [RAMAS[i][2] for i in sorted(en_a)],
+                                 'aporta_b': [RAMAS[i][2] for i in sorted(en_b)]})
     return {'dia_maestro_a': ca['bazi']['dia_maestro'],
             'dia_maestro_b': cb['bazi']['dia_maestro'],
             'util_a': ca['bazi']['elemento_util'], 'util_b': cb['bazi']['elemento_util'],
@@ -1298,6 +1676,7 @@ def lunaciones_mes(datos_natal: dict, anio_: int, mes_: int):
     return {'natal': nat, 'anio': anio_, 'mes': mes_, 'desde': desde, 'hasta': hasta,
             'lunaciones': lun, 'bazi_mes': {'pilar_anio': b['pilar_anio'], 'pilar_mes': b['pilar_mes']},
             'anio_personal': n['anio_personal'], 'mes_personal': n['mes_personal'],
+            'cambio_de_ciclo': _cambio_de_ciclo(d.get('nombre'), d['fecha'], anio_, mes_),
             'avisos': nat['avisos'], 'version': VERSION}
 
 def retorno(datos_natal: dict, cuerpo: str = 'Saturno', fecha_consulta: str | None = None,
@@ -1324,7 +1703,7 @@ def retorno(datos_natal: dict, cuerpo: str = 'Saturno', fecha_consulta: str | No
     primer = pases[0] if pases else None
     T1 = transitos(datos_natal, primer['fecha'], natal=nat) if primer else None
     anio_ret = primer['local'].year if primer else hoy.year
-    n = numerologia(d.get('nombre'), d['fecha'], f"{anio_ret}-{nac.month:02d}-{nac.day:02d}")
+    n = numerologia(d.get('nombre'), d['fecha'], _cumple_en(anio_ret, nac.month, nac.day).isoformat())  # v9.0: 29/2
     dy = nat['da_yun']; ciclo_activo = None
     if dy.get('disponible'):
         edad = (hoy - nac).days / 365.25
@@ -1360,6 +1739,7 @@ def proximo_anio(datos_natal: dict, desde: str | None = None):
         meses.append({'anio': y, 'mes': m, 'desde': f"{y}-{m:02d}-01", 'hasta': f"{y}-{m:02d}-{ult:02d}",
                       'lentos': lentos, 'hitos': T['hitos'], 'casa_natal': T['casa_natal'],
                       'mes_personal': n['mes_personal'], 'anio_personal': n['anio_personal'],
+                      'cambio_de_ciclo': _cambio_de_ciclo(d.get('nombre'), d['fecha'], y, m),
                       'pilar_mes': b['pilar_mes']})
     fin = meses[-1]['hasta']
     lun = lunaciones(desde, fin, tz, A['cusp_deg']); est = estaciones(desde, fin, tz)
@@ -1414,8 +1794,30 @@ def progresiones(datos_natal: dict, fecha_objetivo: str | None = None):
     edad = edad_dias / 365.2422
     jd_p = A['jd'] + edad                    # 1 día = 1 año
     P = astro_jd(jd_p, d['lat'], d['lon'], False)
+    # v9.0 (E1, decisión D8): los ÁNGULOS no se levantan en el instante progresado (eso los
+    # hacía girar casi una vuelta por año, porque la fracción del día es rotación de la
+    # Tierra). Medio Cielo progresado = MC natal + arco solar (Sol progresado − Sol natal);
+    # Ascendente y casas, desde ese MC para la latitud de nacimiento, mismo sistema que la natal.
+    arco = (P['pos']['Sol']['grados'] - A['pos']['Sol']['grados']) % 360
+    mc_p = (A['mc_deg'] + arco) % 360
+    eps = swe.calc_ut(jd_p, swe.ECL_NUT)[0][0]
+    armc = math.degrees(math.atan2(math.sin(math.radians(mc_p)) * math.cos(math.radians(eps)),
+                                   math.cos(math.radians(mc_p)))) % 360
+    hsys = b'W' if (P['sistema_casas'] or '').startswith('Whole') else b'T'
+    cusps_p, ang_p = swe.houses_armc(armc, d['lat'], eps, hsys)
+    cusps_p = [c % 360 for c in cusps_p]
+    P['cusp_deg'] = cusps_p; P['asc_deg'] = ang_p[0] % 360; P['mc_deg'] = mc_p
+    P['asc'] = fmt(P['asc_deg']); P['mc'] = fmt(mc_p)
+    P['arco_solar'] = round(arco, 4)
+    P['metodo_angulos'] = ("Medio Cielo progresado por arco solar en longitud; Ascendente y casas "
+                           "derivados de ese Medio Cielo para la latitud de nacimiento.")
     for k, v in P['pos'].items():
+        v['casa'] = casa_de(v['grados'], cusps_p)
         v['casa_natal'] = casa_de(v['grados'], A['cusp_deg'])
+    P['diurna'] = P['pos']['Sol']['casa'] in (7, 8, 9, 10, 11, 12)
+    _pf = ((P['asc_deg'] + P['pos']['Luna']['grados'] - P['pos']['Sol']['grados']) if P['diurna']
+           else (P['asc_deg'] + P['pos']['Sol']['grados'] - P['pos']['Luna']['grados'])) % 360
+    P['fortuna'] = {'grados': _pf, 'fmt': fmt(_pf), 'casa': casa_de(_pf, cusps_p)}
     cont = []
     for k in ('Sol', 'Luna', 'Mercurio', 'Venus', 'Marte'):
         for c in _contactos_punto(P['pos'][k]['grados'], A, 1.0):
@@ -1453,8 +1855,9 @@ def progresiones(datos_natal: dict, fecha_objetivo: str | None = None):
             'progresada': P, 'contactos': cont, 'fase': {'grados': round(fase, 1), 'nombre': fase_nombre},
             'ingresos_luna': ingresos, 'exactos_12m': exactos,
             'anio_personal': numerologia(d.get('nombre'), d['fecha'], hoy.isoformat())['anio_personal'],
-            'avisos': nat['avisos'] + ["Progresión secundaria: un día de efemérides por cada año de vida, "
-                                       "casas progresadas calculadas para el lugar de nacimiento."],
+            'avisos': nat['avisos'] + ["Progresión secundaria: un día de efemérides por cada año de vida. "
+                                       "Medio Cielo progresado por arco solar; Ascendente y casas "
+                                       "progresadas derivados de él para el lugar de nacimiento."],
             'version': VERSION}
 
 # ============================================================
@@ -1466,16 +1869,21 @@ def anio_personal(datos_natal: dict, fecha_consulta: str | None = None):
     nat = calcular(datos_natal); d = nat['datos']; n = nat['num']
     hoy = datetime.strptime(fecha_consulta, "%Y-%m-%d").date() if fecha_consulta else date.today()
     y, m, dd = [int(x) for x in d['fecha'].split("-")]
-    inicio = date(hoy.year, m, min(dd, 28)) if (hoy.month, hoy.day) >= (m, dd) else date(hoy.year - 1, m, min(dd, 28))
+    # v9.0 (E2): el ciclo arranca el cumpleaños real (antes min(dd, 28) corría a los
+    # nacidos el 29, 30 y 31 al ciclo anterior).
+    inicio = _cumple_en(hoy.year, m, dd)
+    if hoy < inicio:
+        inicio = _cumple_en(hoy.year - 1, m, dd)
     ap = numerologia(d.get('nombre'), d['fecha'], inicio.isoformat())['anio_personal']
     meses = []
     for k in range(12):
         yy, mm = inicio.year + (inicio.month - 1 + k) // 12, (inicio.month - 1 + k) % 12 + 1
         mp, _ = reducir(ap + mm)
         meses.append({'anio': yy, 'mes': mm, 'mes_personal': mp, 'actual': (yy, mm) == (hoy.year, hoy.month)})
-    fin = date(inicio.year + 1, inicio.month, inicio.day) - timedelta(days=1)
+    fin = _cumple_en(inicio.year + 1, m, dd) - timedelta(days=1)
     edad = (hoy - date(y, m, dd)).days / 365.25
-    pin = next((p for p in n['pinaculos'] if p['desde'] <= edad and (p['hasta'] is None or edad <= p['hasta'])), None)
+    edad_c = _edad_cumplida(date(y, m, dd), hoy)          # v9.0 (E3): por cumpleaños
+    pin = next((p for p in n['pinaculos'] if p['desde'] <= edad_c and (p['hasta'] is None or edad_c < p['hasta'])), None)
     i_pin = n['pinaculos'].index(pin) if pin else None
     desafio = n['desafios'][i_pin] if i_pin is not None else None
     siguiente, _ = reducir(ap + 1) if ap < 9 else (1, None)
@@ -1503,7 +1911,10 @@ def decadas(datos_natal: dict, fecha_consulta: str | None = None):
             ciclos.append({**c, 'activa': c['desde'] <= edad < c['hasta'],
                            'rel_tronco': rel(c['elemento_tronco']), 'rel_rama': rel(c['elemento_rama']),
                            'util': c['elemento_tronco'] == b['elemento_util'] or c['elemento_rama'] == b['elemento_util'],
-                           'anio_desde': y + int(c['desde']), 'anio_hasta': y + int(c['hasta'])})
+                           # v9.0 (E18): fecha real de inicio (antes y + int(desde) podía dar un año antes)
+                           'fecha_desde': (date(y, m, dd) + timedelta(days=c['desde'] * 365.2422)).isoformat(),
+                           'anio_desde': (date(y, m, dd) + timedelta(days=c['desde'] * 365.2422)).year,
+                           'anio_hasta': (date(y, m, dd) + timedelta(days=c['hasta'] * 365.2422)).year})
     i_act = next((i for i, c in enumerate(ciclos) if c['activa']), None)
     return {'natal': nat, 'edad': round(edad, 1), 'disponible': dy.get('disponible', False), 'motivo': dy.get('motivo'),
             'ciclos': ciclos, 'indice_activa': i_act, 'anio_bazi': anio_bazi_actual(hoy.isoformat(), d['tz']),
@@ -1513,3 +1924,24 @@ def decadas(datos_natal: dict, fecha_consulta: str | None = None):
 # 11. v8.9 — hora solar local para día y hora Bazi (decisión 28/10/2026)
 # ============================================================
 VERSION = "8.9"
+
+# ============================================================
+# 12. v9.0 — auditoría del 22/11/2026
+# ============================================================
+# E20: la ruta de las efemérides se fija en cada entrada, no solo al importar. Swiss
+# Ephemeris guarda la ruta por hilo: llamado desde otro hilo (un servidor), sin esto caía
+# a Moshier en silencio en revolución solar, lunaciones y pasos exactos.
+import functools as _ft
+
+def _con_ruta(f):
+    @_ft.wraps(f)
+    def g(*a, **k):
+        swe.set_ephe_path(EPHE_DIR)
+        return f(*a, **k)
+    return g
+
+for _n in ('astro_jd', 'revolucion_solar', 'lunaciones', 'estaciones', 'pasos_exactos',
+           '_jieqi_utc', 'hora_solar_local', 'progresiones', 'calcular'):
+    globals()[_n] = _con_ruta(globals()[_n])
+
+VERSION = "9.0"

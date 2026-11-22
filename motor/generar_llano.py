@@ -250,31 +250,63 @@ def _tabla_carta(a):
         filas += (f"<tr><td>{GL.get(k,'')} {NOMBRE_ES.get(k,k)}</td><td>{i['fmt']}{' R' if i['retro'] else ''}</td>"
                   f"<td>{ROMANO[i['casa']-1] if i.get('casa') else '—'}</td><td>{' · '.join(nota)}</td></tr>")
     if a['mc']: filas += f"<tr><td>Medio Cielo</td><td>{a['mc']}</td><td>—</td><td></td></tr>"
+    if a.get('lilith_osculante'):
+        filas += (f"<tr><td>Lilith osculante (referencia)</td><td>{a['lilith_osculante']}</td><td>—</td>"
+                  f"<td>otra convención; la casa usa la media</td></tr>")
     if a['fortuna']: filas += f"<tr><td>Parte de la Fortuna</td><td>{a['fortuna']['fmt']}</td><td>{ROMANO[a['fortuna']['casa']-1]}</td><td></td></tr>"
     return f"<table><tr><th>Cuerpo</th><th>Posición</th><th>Casa</th><th>Dignidad / secta</th></tr>{filas}</table>"
 
-def _tabla_aspectos(asp, tope=4.0):
+def _tabla_aspectos(asp, tope=None):
+    # v9.0 (D4): se publican TODOS los aspectos que el motor detecta (la lectura puede citar
+    # cualquiera, y la fuente tiene que estar en el anexo); el orbe dice si es cerrado o amplio.
     return ("<table><tr><th>Planeta</th><th>Aspecto</th><th>Planeta</th><th>Orbe</th></tr>" +
-            "".join(f"<tr><td>{x['a']}</td><td>{x['aspecto']}</td><td>{x['b']}</td><td>{x['orbe']:.2f}°</td></tr>"
-                    for x in asp if x['orbe'] <= tope) + "</table>")
+            "".join(f"<tr><td>{x['a']}</td><td>{x['aspecto']}</td><td>{x['b']}</td><td>{x['orbe']:.2f}°"
+                    f"{'' if x['orbe'] <= 4.0 else ' (amplio)'}</td></tr>"
+                    for x in asp if tope is None or x['orbe'] <= tope) + "</table>")
+
+def _deudas_txt(n):
+    """v9.0 (E17): cada deuda con la posición de donde sale."""
+    if n.get('deudas_por_posicion') is None:
+        return "; ".join(f"{k} — {t}" for k, t in n['deudas_txt'].items()) or "ninguna"
+    _art = {'día de nacimiento': 'del', 'Camino de Vida': 'del', 'Alma': 'del', 'Expresión': 'de la', 'Personalidad': 'de la'}
+    return "; ".join(f"{x['deuda']} (sale {_art.get(x['posicion'], 'de')} {x['posicion']}: " + " → ".join(map(str, x['traza'])) + f") — {n['deudas_txt'][x['deuda']]}"
+                     for x in n['deudas_por_posicion']) or "ninguna"
+
+def _obs_num(n):
+    """v9.0 (D1, E16): ecos ocultos fuera del núcleo y observaciones de otras formas de sumar el
+    Camino. Van al anexo; al cuerpo, solo si las corrobora el calendario chino (3.bis.12)."""
+    out = ""
+    ecos = {k: v for k, v in (n.get('ecos') or {}).items() if k != 'Madurez'}
+    if ecos:
+        out += "<p>Ecos ocultos (un 11, 22 o 33 que aparece en el camino de la suma y matiza, sin el peso de un maestro): " + "; ".join(
+            f"{k}: " + " → ".join(map(str, v['traza'])) for k, v in ecos.items()) + ".</p>"
+    if n.get('observaciones'):
+        out += ("<p>Observación sobre el Camino de Vida: la casa lo suma reduciendo día, mes y año por separado. "
+                "Otras formas de la tradición dan: " + "; ".join(
+                    f"{o['forma']} → " + " → ".join(map(str, o['traza'])) + f" ({'número maestro' if o['tipo'] == 'maestro' else 'deuda'} {o['valor']})"
+                    + ((f" — el calendario chino lo confirma ({o['bazi']['dato']})" if o['bazi']['corrobora']
+                        else f" — el calendario chino no lo confirma ({o['bazi']['dato']}), queda solo acá")
+                       if o.get('bazi') else " — queda solo acá")
+                    for o in n['observaciones']) + ". Regla de la casa: un dato así se nombra en la lectura solo si el calendario chino dice lo mismo.</p>")
+    return out
 
 def _bloque_num(ch):
     n = ch['num']; b = ch['bazi']; d = ch['da_yun']; dat = ch['datos']
     def v(k): return n[k] if n[k] is not None else '—'
     traza = " → ".join(str(x) for x in n['madurez_traza']) if n['madurez_traza'] else ''
     eco = f" (eco oculto del {n['madurez_eco']})" if n.get('madurez_eco') else ''
-    deu = "; ".join(f"{k} — {t}" for k, t in n['deudas_txt'].items()) or "ninguna"
+    deu = _deudas_txt(n)
     lec = ", ".join(str(x) for x in n['lecciones']) if n['lecciones'] else "ninguna"
     pin = " · ".join(f"P{x['n']} {x['valor']} ({x['desde']}–{x['hasta'] if x['hasta'] else '…'})" for x in n['pinaculos'])
     des = " · ".join(f"D{i+1} {x}" for i, x in enumerate(n['desafios']))
-    yv = ""
+    yv = _obs_num(n)
     if n['y_vocal']:
-        yv = "<p>Criterio de la Y: " + "; ".join(f"«{y['palabra']}» → {y['regla']} → {y['cuenta_como']}" for y in n['y_vocal']) + ".</p>"
+        yv += "<p>Criterio de la Y: " + "; ".join(f"«{y['palabra']}» → {y['regla']} → {y['cuenta_como']}" for y in n['y_vocal']) + ".</p>"
     bal = "".join(f"<td>{b['balance'][e]}</td>" for e in ('Madera','Fuego','Tierra','Metal','Agua'))
     balp = "".join(f"<td>{b['balance_ponderado'][e]}</td>" for e in ('Madera','Fuego','Tierra','Metal','Agua'))
     ys = b['yong_shen_metodo']
     ys_txt = (f"Candidatos ({'controlar o drenar' if b['dm_fuerte'] else 'nutrir o reforzar'}): "
-              f"{', '.join(f'{e} {ys['pesos_candidatos'][e]}' for e in ys['candidatos_finales'])}. "
+              f"{', '.join(e + ' ' + str(ys['pesos_candidatos'][e]) for e in ys['candidatos_finales'])}. "
               f"Elegido: <b>{b['elemento_util']}</b>, margen {ys['margen']}.")
     if ys['margen_estrecho']:
         ys_txt += (f" <b>Margen estrecho:</b> el útil es una indicación abierta entre "
@@ -310,18 +342,18 @@ def _bloque_bazi(ch):
     def v(k): return n[k] if n[k] is not None else '—'
     traza = " → ".join(str(x) for x in n['madurez_traza']) if n['madurez_traza'] else ''
     eco = f" (eco oculto del {n['madurez_eco']})" if n.get('madurez_eco') else ''
-    deu = "; ".join(f"{k} — {t}" for k, t in n['deudas_txt'].items()) or "ninguna"
+    deu = _deudas_txt(n)
     lec = ", ".join(str(x) for x in n['lecciones']) if n['lecciones'] else "ninguna"
     pin = " · ".join(f"P{x['n']} {x['valor']} ({x['desde']}–{x['hasta'] if x['hasta'] else '…'})" for x in n['pinaculos'])
     des = " · ".join(f"D{i+1} {x}" for i, x in enumerate(n['desafios']))
-    yv = ""
+    yv = _obs_num(n)
     if n['y_vocal']:
-        yv = "<p>Criterio de la Y: " + "; ".join(f"«{y['palabra']}» → {y['regla']} → {y['cuenta_como']}" for y in n['y_vocal']) + ".</p>"
+        yv += "<p>Criterio de la Y: " + "; ".join(f"«{y['palabra']}» → {y['regla']} → {y['cuenta_como']}" for y in n['y_vocal']) + ".</p>"
     bal = "".join(f"<td>{b['balance'][e]}</td>" for e in ('Madera','Fuego','Tierra','Metal','Agua'))
     balp = "".join(f"<td>{b['balance_ponderado'][e]}</td>" for e in ('Madera','Fuego','Tierra','Metal','Agua'))
     ys = b['yong_shen_metodo']
     ys_txt = (f"Candidatos ({'controlar o drenar' if b['dm_fuerte'] else 'nutrir o reforzar'}): "
-              f"{', '.join(f'{e} {ys['pesos_candidatos'][e]}' for e in ys['candidatos_finales'])}. "
+              f"{', '.join(e + ' ' + str(ys['pesos_candidatos'][e]) for e in ys['candidatos_finales'])}. "
               f"Elegido: <b>{b['elemento_util']}</b>, margen {ys['margen']}.")
     if ys['margen_estrecho']:
         ys_txt += (f" <b>Margen estrecho:</b> el útil es una indicación abierta entre "
@@ -475,7 +507,7 @@ def plantilla_integral(L, ch):
 {_anexo_abre()}
 <h3>Carta natal</h3><p>{_linea_natal(ch)}</p>
 {_tabla_carta(ch['astro'])}
-<h3>Aspectos mayores (orbe ≤ 4°)</h3>{_tabla_aspectos(ch['astro']['aspectos'])}
+<h3>Aspectos mayores (orbes: Sol y Luna 8°, Mercurio a Saturno 6°, el resto 4° o menos; «amplio» si pasa de 4°)</h3>{_tabla_aspectos(ch['astro']['aspectos'])}
 {_bloque_num_bazi(ch)}
 {_anexo_cierra(L, ch['avisos'])}"""
     return _doc(L, 'Lectura Integral', 'Lectura Integral', cuerpo)
@@ -549,7 +581,7 @@ def plantilla_anio(L, Y):
 <p>Instante del retorno: {rs['utc'].strftime('%d/%m/%Y %H:%M')} UTC ({rs['local'].strftime('%H:%M')} hora local) · levantada en {rs['lugar']} ({rs['lat']:.4f}, {rs['lon']:.4f}) · Sol a {nat['astro']['pos']['Sol']['fmt']}, residuo {abs(rs['residuo_deg']):.1e}° · casas {rs['sistema_casas']} · carta {rs['secta']['tipo']}.</p>
 {_tabla_carta(rs)}
 <p>Casa natal de cada cuerpo del año: {casas}.</p>
-<h3>Aspectos mayores de la carta del año (orbe ≤ 4°)</h3>{_tabla_aspectos(rs['aspectos'])}
+<h3>Aspectos mayores de la carta del año (mismos orbes que la natal; «amplio» si pasa de 4°)</h3>{_tabla_aspectos(rs['aspectos'])}
 <h3>Cuerpos del año sobre puntos natales (orbe ≤ 3°)</h3>{cruz_t}
 <p>Hitos de ciclo: {hitos}.</p>
 <h3>Calendario calculado del año</h3>
@@ -786,7 +818,7 @@ def plantilla_sinastria(L, S):
         return "<p>" + ", ".join(f"{k} de {quien} en {ROMANO[c-1]} de {de}" for k, c in dic.items() if k in ORDEN) + ".</p>"
     bz = S['bazi']; rel = bz['relaciones']
     rel_t = "; ".join([f"Chong {r['a']}–{r['b']}" for r in rel['chong']] + [f"Liuhé {r['a']}–{r['b']}" for r in rel['liuhe']] +
-                      [f"Sanhé de {r['elemento']}: {', '.join(r['ramas'])}" for r in rel['sanhe']]) or "sin relaciones mayores entre ramas"
+                      [f"{r.get('tipo', 'Sanhé')} de {r['elemento']}: {', '.join(r['ramas'])}" for r in rel['sanhe']]) or "sin relaciones mayores entre ramas"
     nu = S['num']
     cuerpo = f"""
 {_tapa(L, 'Sinastría', 'Dos cielos, y lo que pasa entre los dos', f"<br>con <b>{html.escape(nb)}</b><br>{L['datos_linea_b']}<br>Vínculo: {L['vinculo']}")}
@@ -869,7 +901,7 @@ def plantilla_progresiones(L, G):
 <h3>Carta natal</h3><p>{_linea_natal(nat)}</p>
 {_tabla_carta(nat['astro'])}
 <h3>Carta progresada al {G['fecha']} (edad {G['edad']})</h3>
-<p>Progresión secundaria, un día por año. Casas progresadas para el lugar de nacimiento. Fase lunar progresada: <b>{G['fase']['nombre']}</b> ({G['fase']['grados']}° de separación Sol–Luna).</p>
+<p>Progresión secundaria, un día por año. Medio Cielo progresado por arco solar; Ascendente y casas progresadas derivados de él para el lugar de nacimiento. Fase lunar progresada: <b>{G['fase']['nombre']}</b> ({G['fase']['grados']}° de separación Sol–Luna).</p>
 {tabla_p}
 <h3>Contactos progresado → natal (orbe ≤ 1°)</h3>{cont_t}
 <h3>Pases exactos de Sol y Luna progresados, próximos doce meses</h3>{ex_t}
@@ -925,7 +957,7 @@ def plantilla_natal(L, ch):
 {_anexo_abre()}
 <h3>Carta natal</h3><p>{_linea_natal(ch)}</p>
 {_tabla_carta(ch['astro'])}
-<h3>Aspectos mayores (orbe ≤ 4°)</h3>{_tabla_aspectos(ch['astro']['aspectos'])}
+<h3>Aspectos mayores (orbes: Sol y Luna 8°, Mercurio a Saturno 6°, el resto 4° o menos; «amplio» si pasa de 4°)</h3>{_tabla_aspectos(ch['astro']['aspectos'])}
 {_anexo_cierra(L, ch['astro']['avisos'])}"""
     return _doc(L, 'Lectura natal', 'Lectura natal', cuerpo)
 
@@ -1107,7 +1139,7 @@ def plantilla_hijo(L, ch):
 {_anexo_abre()}
 <h3>Carta natal</h3><p>{_linea_natal(ch)}</p>
 {_tabla_carta(ch['astro'])}
-<h3>Aspectos mayores (orbe ≤ 4°)</h3>{_tabla_aspectos(ch['astro']['aspectos'])}
+<h3>Aspectos mayores (orbes: Sol y Luna 8°, Mercurio a Saturno 6°, el resto 4° o menos; «amplio» si pasa de 4°)</h3>{_tabla_aspectos(ch['astro']['aspectos'])}
 {_bloque_num_bazi(ch)}
 {_anexo_cierra(L, ch['avisos'])}"""
     return _doc(L, 'Lectura de un hijo o hija', 'Lectura de un hijo o hija', cuerpo)

@@ -201,7 +201,7 @@ chk("la sinastría produce aspectos cruzados", True, len(sy["aspectos"]) > 0)
 chk("el Nodo Sur no duplica el eje en sinastría", 0, sum(1 for x in sy["aspectos"] if "Nodo S" in (x["a"], x["b"])))
 sb = E.sinastria_bazi(DEMO, OTRA)
 chk("la sinastría Bazi reporta las tres relaciones", True, set(sb["relaciones"]) == {"chong", "liuhe", "sanhe"})
-chk("una Sanhé solo se declara con las tres ramas", True, all(r["completa"] for r in sb["relaciones"]["sanhe"]))
+chk("una Sanhé completa solo se declara con las tres ramas; la media se rotula como media (v9.0)", True, all((len(r["ramas"]) == 3) if r["completa"] else ("media" in r["tipo"] and len(r["ramas"]) == 2) for r in sb["relaciones"]["sanhe"]))
 
 titulo("14 · REFINAMIENTOS v8.1 — fallas 14, 15 y 16 [sin longitud: convención reloj]")
 nd = E.numerologia(DEMO["nombre"], DEMO["fecha"])
@@ -311,8 +311,10 @@ chk("Ascendente topocéntrico = astro.com (27.5018937)", True, abs(Ac["asc_deg"]
 chk("MC = astro.com (300.2938685)", True, abs(Ac["mc_deg"] - 300.2938685) * 3600 < 0.1)
 chk("cúspide II topocéntrica = astro.com (56.1126375)", True, abs(Ac["cusp_deg"][1] - 56.1126375) * 3600 < 0.1)
 # P2: borde de signo
-chk("fmt arrastra 29°59.6' al signo siguiente", "0°00' Tauro", E.fmt(29.9959))
-chk("fmt cierra el círculo en Aries", "0°00' Aries", E.fmt(359.9999))
+# v9.0 (E11): fmt trunca al minuto; el signo mostrado es el real (el control viejo daba por bueno «0°00' Tauro»)
+chk("fmt muestra 29°59.6' en su signo real (v9.0: trunca)", "29°59' Aries", E.fmt(29.9959))
+chk("fmt: 359°59.99' sigue en Piscis", "29°59' Piscis", E.fmt(359.9999))
+chk("fmt: 30° exactos es Tauro", "0°00' Tauro", E.fmt(30.0))
 chk("fmt no toca un grado normal", "27°30' Aries", E.fmt(27.50189))
 # P3 → v8.9: el pilar de hora se calcula sobre la HORA SOLAR LOCAL cuando hay longitud (sección 19).
 # Sin longitud, el motor cae a reloj y lo declara.
@@ -368,6 +370,17 @@ chk("el DST se declara dentro de la corrección", True, bF2["hora_pilar"]["dst_a
 # La convención «reloj» sigue disponible para auditar lecturas anteriores a v8.9
 chk("convención reloj reproduce el balance publicado en 2.4 hasta v8.8.1",
     {"Madera": 1.6, "Fuego": 2.6, "Tierra": 2.7, "Metal": 1.1, "Agua": 0.0}, br["balance"])
+
+import controles_v9
+controles_v9.correr(chk, titulo, E)
+controles_v9.correr_bazi(chk, titulo, E)
+controles_v9.correr_astro(chk, titulo, E)
+controles_v9.correr_horas(chk, titulo, E)
+controles_v9.correr_numeros(chk, titulo, E)
+controles_v9.correr_sin_hora_sexo(chk, titulo, E)
+controles_v9.correr_resto(chk, titulo, E)
+controles_v9.correr_doctrina(chk, titulo, E)
+controles_v9.correr_referencia_privada(chk, titulo, E)
 
 titulo("RESUMEN")
 p = sum(1 for r in _res if r[0]); f_ = len(_res) - p

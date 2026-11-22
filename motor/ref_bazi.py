@@ -23,7 +23,7 @@ def jieqi_utc(anios):
     for a in key:
         for jq in sxtwl.getJieQiByYear(a):
             t = sxtwl.JD2DD(jq.jd)
-            cst = datetime(int(t.Y), int(t.M), int(t.D), int(t.h), int(t.m))
+            cst = datetime(int(t.Y), int(t.M), int(t.D), int(t.h), int(t.m)) + timedelta(seconds=float(t.s))  # v9.0: con segundos; el motor usa Swiss Ephemeris, así la referencia es independiente
             out.append((cst - timedelta(hours=8), jq.jqIndex))
     out.sort()
     _cache[key] = out
