@@ -381,6 +381,7 @@ controles_v9.correr_sin_hora_sexo(chk, titulo, E)
 controles_v9.correr_resto(chk, titulo, E)
 controles_v9.correr_doctrina(chk, titulo, E)
 controles_v9.correr_referencia_privada(chk, titulo, E)
+controles_v9.correr_cielo(chk, titulo, E)
 
 titulo("RESUMEN")
 p = sum(1 for r in _res if r[0]); f_ = len(_res) - p

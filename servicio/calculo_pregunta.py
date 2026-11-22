@@ -69,6 +69,10 @@ def _jd_local(fecha: str, hora: str, tz: str) -> float:
 
 
 def _fase_luna(jd: float) -> dict:
+    # v0.2 (22/11/2026): la fase la da el motor 9.1 (m.fase_luna, mismo criterio). Pedido de Fabricio:
+    # «todo se basa en el 9.0». Lo de abajo queda solo si el motor es anterior a la 9.1.
+    if hasattr(m, "fase_luna"):
+        return m.fase_luna(jd)
     sol = swe.calc_ut(jd, swe.SUN)[0][0]
     luna = swe.calc_ut(jd, swe.MOON)[0][0]
     elong = (luna - sol) % 360

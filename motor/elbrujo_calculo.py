@@ -1945,3 +1945,290 @@ for _n in ('astro_jd', 'revolucion_solar', 'lunaciones', 'estaciones', 'pasos_ex
     globals()[_n] = _con_ruta(globals()[_n])
 
 VERSION = "9.0"
+
+
+# ============================================================
+# 13. v9.1 — EL CIELO DE TODOS (22/11/2026)
+# ============================================================
+# Pedido de Fabricio: «Que todos los flujos y todas las lecturas dependen del motor (…) que todo
+# se basa en el 9.0». Hasta acá el cielo colectivo lo calculaban por su cuenta el calendario
+# (IA\CIELO_calculo_v1.py, pestaña Cielo), los aspectos (IA\CIELO_aspectos_v1.py, pestaña
+# Aspectos), el cielo de la web y los tips (servicio\cielo_hoy.py) y los scripts de los reels.
+# Desde la v9.1 viven acá, con los mismos algoritmos (pasos y bisección) para que el resultado no
+# cambie, y todos los llaman. Reglas de la adenda 8.6.4: grados truncados al minuto; horas
+# redondeadas al minuto (decisión de Fabricio, 22/11: «Redondear»).
+TZ_AR = "America/Argentina/Buenos_Aires"
+CUERPOS_CIELO = [('Sol', swe.SUN), ('Mercurio', swe.MERCURY), ('Venus', swe.VENUS), ('Marte', swe.MARS),
+                 ('Júpiter', swe.JUPITER), ('Saturno', swe.SATURN), ('Urano', swe.URANUS),
+                 ('Neptuno', swe.NEPTUNE), ('Plutón', swe.PLUTO), ('Quirón', swe.CHIRON)]
+_COD_CIELO = dict(CUERPOS_CIELO + [('Luna', swe.MOON)])
+LENTOS_CIELO = {'Júpiter', 'Saturno', 'Urano', 'Neptuno', 'Plutón', 'Quirón'}
+ASPECTOS_CIELO = [('Conjunción', 0.0), ('Sextil', 60.0), ('Cuadratura', 90.0), ('Trígono', 120.0), ('Oposición', 180.0)]
+AU_KM = 149597870.7
+_BACKENDS_CIELO = set()
+
+def cielo_pos(jd: float, cuerpo) -> tuple:
+    """(longitud, latitud, distancia en UA, velocidad en longitud) geocéntricas aparentes."""
+    cod = _COD_CIELO[cuerpo] if isinstance(cuerpo, str) else cuerpo
+    xx, ret = swe.calc_ut(jd, cod, swe.FLG_SWIEPH | swe.FLG_SPEED)
+    _BACKENDS_CIELO.add(_backend(ret))
+    return xx[0] % 360, xx[1], xx[2], xx[3]
+
+def efemerides_cielo() -> str:
+    return " + ".join(sorted(_BACKENDS_CIELO)) or "sin calcular"
+
+def _n180(x: float) -> float:
+    return (x + 180.0) % 360.0 - 180.0
+
+def _bis_signo(f, a: float, b: float, n: int = 100) -> float:
+    """Bisección por signo (la del calendario del cielo)."""
+    fa = f(a)
+    for _ in range(n):
+        m_ = (a + b) / 2
+        fm = f(m_)
+        if (fm > 0) == (fa > 0):
+            a, fa = m_, fm
+        else:
+            b = m_
+    return (a + b) / 2
+
+def _bis_producto(f, a: float, b: float, n: int = 50) -> float:
+    """Bisección por producto (la de los aspectos y del cielo de la web)."""
+    fa = f(a)
+    for _ in range(n):
+        m_ = (a + b) / 2
+        fm = f(m_)
+        if fa * fm <= 0:
+            b = m_
+        else:
+            a, fa = m_, fm
+    return (a + b) / 2
+
+def fmt_de(g: float) -> str:
+    """«g°mm' de Signo», con el grado TRUNCADO al minuto (E11)."""
+    t = fmt(g)                                   # «g°mm' Signo»
+    gm, signo = t.split(" ", 1)
+    return f"{gm} de {signo}"
+
+def signo_de(g: float) -> str:
+    return SIGNOS[int((g % 360) // 30)]
+
+def hora_exacta(jd: float, tz: str = TZ_AR) -> datetime:
+    """Instante local con segundos (sin redondear), naive."""
+    y, mo, d, h = swe.revjul(jd)
+    u = pytz.UTC.localize(datetime(y, mo, d) + timedelta(seconds=h * 3600.0))
+    return u.astimezone(pytz.timezone(tz)).replace(tzinfo=None)
+
+def hora_minuto(jd: float, tz: str = TZ_AR) -> datetime:
+    """Instante local redondeado al minuto (regla de la casa), naive."""
+    t = hora_exacta(jd, tz) + timedelta(seconds=30)
+    return t.replace(second=0, microsecond=0)
+
+def jd_desde_local(fecha_hora: datetime, tz: str = TZ_AR) -> float:
+    u = pytz.timezone(tz).localize(fecha_hora).astimezone(pytz.UTC)
+    return swe.julday(u.year, u.month, u.day, u.hour + u.minute / 60 + u.second / 3600 + u.microsecond / 3.6e9)
+
+def fase_luna(jd: float) -> dict:
+    """Fase y porcentaje iluminado (lo que usaba calculo_pregunta._fase_luna)."""
+    elong = (cielo_pos(jd, 'Luna')[0] - cielo_pos(jd, 'Sol')[0]) % 360
+    ilum = round((1 - math.cos(math.radians(elong))) / 2 * 100)
+    if elong < 10 or elong > 350: nombre = "luna nueva"
+    elif elong < 80: nombre = "creciente"
+    elif elong < 100: nombre = "cuarto creciente"
+    elif elong < 170: nombre = "gibosa creciente"
+    elif elong < 190: nombre = "luna llena"
+    elif elong < 260: nombre = "gibosa menguante"
+    elif elong < 280: nombre = "cuarto menguante"
+    else: nombre = "menguante"
+    return {"fase": nombre, "iluminada_pct": ilum}
+
+def lunaciones_jd(jd0: float, jd1: float) -> list:
+    """[(jd, 'nueva'|'llena')] entre jd0 y jd1 (algoritmo del calendario: paso 0,5 d, bisección 100)."""
+    out = []
+    for objetivo, nombre in ((0.0, 'nueva'), (180.0, 'llena')):
+        f = lambda t, o=objetivo: _n180(cielo_pos(t, 'Luna')[0] - cielo_pos(t, 'Sol')[0] - o)
+        t = jd0 - 1
+        prev = f(t)
+        while t < jd1:
+            t2 = t + 0.5
+            cur = f(t2)
+            if prev < 0 <= cur and abs(cur - prev) < 90:
+                r = _bis_signo(f, t, t2)
+                if jd0 <= r < jd1:
+                    out.append((r, nombre))
+            t, prev = t2, cur
+    return sorted(out)
+
+def proxima_fase(jd: float, objetivo: float, dias: float = 32) -> float | None:
+    """La próxima vez que la Luna está a `objetivo` grados del Sol (0 nueva, 180 llena)."""
+    f = lambda t: _n180(cielo_pos(t, 'Luna')[0] - cielo_pos(t, 'Sol')[0] - objetivo)
+    t, ft = jd, f(jd)
+    for _ in range(int(dias / 0.25)):
+        t2 = t + 0.25
+        f2 = f(t2)
+        if ft * f2 < 0 and abs(ft) < 30 and abs(f2) < 30:
+            return _bis_producto(f, t, t2)
+        t, ft = t2, f2
+    return None
+
+def ingresos_y_estaciones(jd0: float, jd1: float, cuerpos=None, paso: float = 0.25):
+    """Cambios de signo [(jd, cuerpo, signo, directo)] y estaciones [(jd, cuerpo, 'retrógrado'|'directo', lon)]
+    (algoritmo del calendario)."""
+    cuerpos = cuerpos or [c for c, _ in CUERPOS_CIELO]
+    ing, est = [], []
+    for nombre in cuerpos:
+        t = jd0 - 2
+        p = cielo_pos(t, nombre)
+        while t < jd1:
+            t2 = t + paso
+            c = cielo_pos(t2, nombre)
+            s1, s2 = int(p[0] // 30) % 12, int(c[0] // 30) % 12
+            if s1 != s2:
+                directo = _n180(c[0] - p[0]) > 0
+                b = (s2 * 30.0) if directo else (s1 * 30.0)
+                g = ((lambda x, b=b, n=nombre: _n180(cielo_pos(x, n)[0] - b)) if directo
+                     else (lambda x, b=b, n=nombre: -_n180(cielo_pos(x, n)[0] - b)))
+                r = _bis_signo(g, t, t2)
+                if jd0 <= r < jd1:
+                    ing.append((r, nombre, SIGNOS[s2], directo))
+            if nombre != 'Sol' and (p[3] > 0) != (c[3] > 0):
+                r = _bis_signo(lambda x, n=nombre: cielo_pos(x, n)[3], t, t2)
+                if jd0 <= r < jd1:
+                    est.append((r, nombre, 'retrógrado' if p[3] > 0 else 'directo', cielo_pos(r, nombre)[0]))
+            t, p = t2, c
+    return sorted(ing), sorted(est)
+
+def ingresos_proximos(jd: float, dias: float = 7, cuerpos=None) -> list:
+    """Cambios de signo de los próximos `dias` (lo que usaba el cielo de la web)."""
+    ing, _ = ingresos_y_estaciones(jd, jd + dias, cuerpos or [c for c, _ in CUERPOS_CIELO if c != 'Quirón'])
+    return [{'planeta': n, 'entra_en': s, 'jd': r, 'retrogrado': cielo_pos(r, n)[3] < 0} for r, n, s, d in ing]
+
+def peso_aspecto(a: str, b: str, asp: str) -> str:
+    """Peso de un aspecto entre planetas (criterio del taller, no astronómico)."""
+    asp = asp.capitalize()
+    la, lb = a in LENTOS_CIELO, b in LENTOS_CIELO
+    duro = asp in ('Conjunción', 'Cuadratura', 'Oposición')
+    if la and lb:
+        return 'Alta' if duro else 'Media'
+    if (la or lb) and asp in ('Conjunción', 'Oposición'):
+        return 'Media'
+    if not la and not lb and asp == 'Conjunción':
+        return 'Media'
+    return 'Baja'
+
+def aspectos_exactos(jd0: float, jd1: float, cuerpos=None, paso: float = 0.1) -> list:
+    """Aspectos exactos entre planetas en un período (algoritmo de la pestaña Aspectos)."""
+    cuerpos = cuerpos or [c for c, _ in CUERPOS_CIELO]
+    filas = []
+    for i, na in enumerate(cuerpos):
+        for nb in cuerpos[i + 1:]:
+            for asp, ang in ASPECTOS_CIELO:
+                for obj in ([ang] if ang in (0.0, 180.0) else [ang, 360.0 - ang]):
+                    f = lambda jd, na=na, nb=nb, obj=obj: _n180(cielo_pos(jd, na)[0] - cielo_pos(jd, nb)[0] - obj)
+                    t, fa = jd0, f(jd0)
+                    while t < jd1:
+                        t2 = t + paso
+                        fb = f(t2)
+                        if fa == 0 or (fa * fb < 0 and abs(fa) < 20 and abs(fb) < 20):
+                            jd = _bis_producto(f, t, t2)
+                            pa, pb = cielo_pos(jd, na), cielo_pos(jd, nb)
+                            filas.append(dict(jd=jd, a=na, b=nb, asp=asp, lona=pa[0], lonb=pb[0],
+                                              ra=pa[3] < 0, rb=pb[3] < 0, peso=peso_aspecto(na, nb, asp)))
+                        t, fa = t2, fb
+    return sorted(filas, key=lambda r: r['jd'])
+
+def _exacto_cerca(f, jd0: float, dias: float = 40, paso: float = 0.25) -> float | None:
+    mejor = None
+    for sentido in (1, -1):
+        t, ft = jd0, f(jd0)
+        recorrido = 0.0
+        while recorrido < dias:
+            t2 = t + sentido * paso
+            f2 = f(t2)
+            if ft == 0 or (ft * f2 < 0 and abs(ft) < 20 and abs(f2) < 20):
+                r = _bis_producto(f, min(t, t2), max(t, t2))
+                if mejor is None or abs(r - jd0) < abs(mejor - jd0):
+                    mejor = r
+                break
+            t, ft, recorrido = t2, f2, recorrido + paso
+    return mejor
+
+def aspectos_activos(jd: float, orbe_max: float = 3.0, cuerpos=None) -> list:
+    """Aspectos entre planetas en orbe en un instante, con su momento exacto más cercano
+    (lo que usaba el cielo de la web). Sin Quirón, como la web."""
+    cuerpos = cuerpos or [c for c, _ in CUERPOS_CIELO if c != 'Quirón']
+    out = []
+    for i, na in enumerate(cuerpos):
+        for nb in cuerpos[i + 1:]:
+            pa, pb = cielo_pos(jd, na), cielo_pos(jd, nb)
+            sep = abs(_n180(pa[0] - pb[0]))
+            for asp, ang in ASPECTOS_CIELO:
+                orbe = abs(sep - ang)
+                if orbe > orbe_max:
+                    continue
+                objetivos = [ang] if ang in (0.0, 180.0) else [ang, -ang]
+                obj = min(objetivos, key=lambda o: abs(_n180(pa[0] - pb[0] - o)))
+                f = lambda t, na=na, nb=nb, o=obj: _n180(cielo_pos(t, na)[0] - cielo_pos(t, nb)[0] - o)
+                lentos = na in LENTOS_CIELO and nb in LENTOS_CIELO
+                jx = _exacto_cerca(f, jd, dias=420, paso=1.0) if lentos else _exacto_cerca(f, jd)
+                out.append({'a': na, 'b': nb, 'aspecto': asp, 'angulo': int(ang), 'orbe': round(orbe, 2),
+                            'lon_a': pa[0], 'lon_b': pb[0], 'retro_a': pa[3] < 0, 'retro_b': pb[3] < 0,
+                            'jd_exacto': jx, 'peso': peso_aspecto(na, nb, asp)})
+                break
+    orden = {'Alta': 0, 'Media': 1, 'Baja': 2}
+    return sorted(out, key=lambda x: (orden[x['peso']], x['orbe']))
+
+def terminos_solares(jd0: float, jd1: float, solo_jie: bool = True) -> list:
+    """Términos solares (jieqi) al segundo, con Swiss Ephemeris (E5): [(jd, longitud_del_sol, índice)]."""
+    y0 = hora_exacta(jd0, 'UTC').year; y1 = hora_exacta(jd1, 'UTC').year
+    out = []
+    for t, idx in _jieqi_utc(list(range(y0 - 1, y1 + 2))):
+        jd = swe.julday(t.year, t.month, t.day, t.hour + t.minute / 60 + t.second / 3600 + t.microsecond / 3.6e9)
+        lon = (270.0 + 15.0 * idx) % 360.0
+        if jd0 <= jd < jd1 and (not solo_jie or idx % 2 == 1):
+            out.append((jd, lon, idx))
+    return sorted(set(out))
+
+def apsides_tierra(jd0: float, jd1: float) -> list:
+    """Perihelio y afelio: [(jd, 'perihelio'|'afelio', distancia_km)] (paso 1 d, bisección)."""
+    out = []
+    t = jd0
+    prev = cielo_pos(t, 'Sol')
+    while t < jd1:
+        t2 = t + 1
+        cur = cielo_pos(t2, 'Sol')
+        vd0 = swe.calc_ut(t, swe.SUN, swe.FLG_SWIEPH | swe.FLG_SPEED)[0][5]
+        vd1 = swe.calc_ut(t2, swe.SUN, swe.FLG_SWIEPH | swe.FLG_SPEED)[0][5]
+        if (vd0 < 0) != (vd1 < 0):
+            r = _bis_signo(lambda x: swe.calc_ut(x, swe.SUN, swe.FLG_SWIEPH | swe.FLG_SPEED)[0][5], t, t2)
+            out.append((r, 'perihelio' if vd0 < 0 else 'afelio', cielo_pos(r, 'Sol')[2] * AU_KM))
+        t, prev = t2, cur
+    return out
+
+def eclipse_sol_global(jd0: float):
+    """Próximo eclipse de Sol: (tipo_flag, tiempos) de swe.sol_eclipse_when_glob."""
+    return swe.sol_eclipse_when_glob(jd0, swe.FLG_SWIEPH, 0, False)
+
+def eclipse_sol_local(jd0: float, lon: float, lat: float, alt: float = 0.0):
+    """Próximo eclipse de Sol visible en un lugar: (flag, tiempos, atributos)."""
+    return swe.sol_eclipse_when_loc(jd0, (lon, lat, alt), swe.FLG_SWIEPH, False)
+
+def eclipse_luna_siguiente(jd0: float):
+    return swe.lun_eclipse_when(jd0, swe.FLG_SWIEPH, 0, False)
+
+def eclipse_luna_como(jd: float, lon: float, lat: float, alt: float = 0.0):
+    return swe.lun_eclipse_how(jd, (lon, lat, alt), swe.FLG_SWIEPH)
+
+def salida(jd0: float, cuerpo, lon: float, lat: float, alt: float = 0.0, temp: float = 15.0):
+    """Próxima salida de un cuerpo en un lugar (jd)."""
+    cod = _COD_CIELO[cuerpo] if isinstance(cuerpo, str) else cuerpo
+    return swe.rise_trans(jd0, cod, swe.CALC_RISE, (lon, lat, alt), 1013.25, temp, swe.FLG_SWIEPH)[1][0]
+
+# E20: la ruta de las efemérides se fija en las funciones de entrada (no en cielo_pos, que se llama
+# miles de veces dentro de los bucles).
+for _n in ('fase_luna', 'lunaciones_jd', 'proxima_fase', 'ingresos_y_estaciones', 'ingresos_proximos',
+           'aspectos_exactos', 'aspectos_activos', 'terminos_solares', 'apsides_tierra', 'eclipse_sol_global',
+           'eclipse_sol_local', 'eclipse_luna_siguiente', 'eclipse_luna_como', 'salida'):
+    globals()[_n] = _con_ruta(globals()[_n])
+
+VERSION = "9.1"

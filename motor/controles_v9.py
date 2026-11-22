@@ -234,3 +234,31 @@ def correr_referencia_privada(chk, titulo, E):
         abs(((a["fortuna"]["grados"] - grados(R["pos"]["Fortuna"])) + 180) % 360 - 180) * 60 < 1.5)
     chk("referencia · Lilith osculante de referencia a menos de 1,5'", True,
         abs(((grados(a["lilith_osculante"]) - grados(R["pos"]["Lilith (osculante)"].replace(" R", ""))) + 180) % 360 - 180) * 60 < 1.5)
+
+def correr_cielo(chk, titulo, E):
+    titulo("29 · v9.1 — EL CIELO DE TODOS (calendario, aspectos, cielo de la web)")
+    from datetime import datetime as _dt
+    jd0 = E.jd_desde_local(_dt(2026, 11, 2)); jd1 = E.jd_desde_local(_dt(2028, 1, 1))
+    lun = E.lunaciones_jd(jd0, jd1)
+    chk("cielo · 29 lunaciones del 2/11/2026 al 31/12/2027 (igual al calendario v1)", 29, len(lun))
+    ll = [r for r, n in lun if n == "llena"][0]
+    chk("cielo · luna llena del 24/11: 11:53:34 exacta, 11:54 redondeada (decisión del 22/11)",
+        ("11:53:34", "11:54"), (E.hora_exacta(ll).strftime("%H:%M:%S"), E.hora_minuto(ll).strftime("%H:%M")))
+    ing, est = E.ingresos_y_estaciones(jd0, jd1)
+    chk("cielo · 59 cambios de signo (54 ingresos + 5 solsticios y equinoccios) y 24 estaciones, igual al calendario v1", (59, 24), (len(ing), len(est)))
+    m13 = [e for e in est if e[1] == "Mercurio"][0]
+    chk("cielo · Mercurio directo el 13/11/2026 a las 12:54", ("Mercurio", "directo", "2026-11-13 12:54"),
+        (m13[1], m13[2], E.hora_minuto(m13[0]).strftime("%Y-%m-%d %H:%M")))
+    asp = E.aspectos_exactos(E.jd_desde_local(_dt(2026, 11, 14)), E.jd_desde_local(_dt(2026, 11, 17)))
+    mj = [x for x in asp if (x["a"], x["b"], x["asp"]) == ("Marte", "Júpiter", "Conjunción")][0]
+    chk("cielo · conjunción Marte–Júpiter 16/11/2026 03:23:39 (igual a la pestaña Aspectos)",
+        ("03:23:39", "Media", "25°53' de Leo"), (E.hora_exacta(mj["jd"]).strftime("%H:%M:%S"), mj["peso"], E.fmt_de(mj["lona"])))
+    lichun = [r for r, lon, i in E.terminos_solares(E.jd_desde_local(_dt(2027, 1, 1)), E.jd_desde_local(_dt(2027, 3, 1))) if round(lon) == 315][0]
+    chk("cielo · Lichun 2027: miércoles 3/2 a las 22:46 hora argentina", "2027-02-03 22:46", E.hora_minuto(lichun).strftime("%Y-%m-%d %H:%M"))
+    ap = E.apsides_tierra(E.jd_desde_local(_dt(2026, 12, 25)), E.jd_desde_local(_dt(2027, 1, 10)))
+    chk("cielo · perihelio en los primeros días de enero de 2027", ("perihelio", 1), (ap[0][1], E.hora_minuto(ap[0][0]).month))
+    chk("cielo · fase de la Luna: luna llena el 24/11/2026 al mediodía", "luna llena", E.fase_luna(E.jd_desde_local(_dt(2026, 11, 24, 12)))["fase"])
+    act = E.aspectos_activos(E.jd_desde_local(_dt(2026, 11, 16, 12)))
+    chk("cielo · aspecto activo Marte–Júpiter el 16/11 con su exacto (cielo de la web)", True,
+        any(x["a"] == "Marte" and x["b"] == "Júpiter" and x["jd_exacto"] for x in act))
+    chk("cielo · grados truncados en el texto (fmt_de)", "29°59' de Aries", E.fmt_de(29.9959))
