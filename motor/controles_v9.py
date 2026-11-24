@@ -172,6 +172,15 @@ def correr_resto(chk, titulo, E):
         E.geocodificar = orig
     chk("E21 · el lugar encontrado queda en los datos", True, (c["datos"].get("lugar_encontrado") or "").startswith("San Martín, Partido"))
     chk("E21 · y en los avisos", True, any("Lugar encontrado" in a for a in c["avisos"]))
+    # v9.1.1 (24/11/2026): la relación entre Días Maestros de la sinastría, en las dos direcciones (antes «controla» salía al revés)
+    A = dict(fecha="1985-07-22", hora="18:10", lat=-31.4201, lon=-64.1888, tz="America/Argentina/Cordoba", nombre="Martina Sol Acosta")
+    B = dict(fecha="1978-11-03", hora=None, lat=-34.9011, lon=-56.1645, tz="America/Montevideo", nombre="Diego Andrés Paredes")
+    chk("9.1.1 · sinastría Ren (Agua) con Ji (Tierra): la Tierra controla al Agua", "Tierra controla a Agua",
+        E.sinastria_completa(A, B)["bazi"]["relacion_dias_maestros"])
+    chk("9.1.1 · y al revés, Ji con Ren: igual", "Tierra controla a Agua", E.sinastria_completa(B, A)["bazi"]["relacion_dias_maestros"])
+    C = dict(fecha="1980-05-01", hora="12:00", lat=-34.6037, lon=-58.3816, tz="America/Argentina/Buenos_Aires", nombre="Pablo Prueba")  # Jia, Madera
+    chk("9.1.1 · el Agua nutre a la Madera, en las dos direcciones (nutre ya estaba bien)", ("Agua nutre a Madera", "Agua nutre a Madera"),
+        (E.sinastria_completa(A, C)["bazi"]["relacion_dias_maestros"], E.sinastria_completa(C, A)["bazi"]["relacion_dias_maestros"]))
 
 
 def correr_doctrina(chk, titulo, E):

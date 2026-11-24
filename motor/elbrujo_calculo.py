@@ -1772,8 +1772,9 @@ def sinastria_completa(datos_a: dict, datos_b: dict):
     if ea == eb: rel_dm = 'mismo elemento'
     elif NUTRE[eb] == ea: rel_dm = f'{ea} nutre a {eb}'
     elif NUTRE[ea] == eb: rel_dm = f'{eb} nutre a {ea}'
-    elif CONTROLA[ea] == eb: rel_dm = f'{ea} controla a {eb}'
-    elif CONTROLA[eb] == ea: rel_dm = f'{eb} controla a {ea}'
+    # v9.1.1 (24/11/2026): CONTROLA[x] es lo que controla a x (Agua: Tierra); antes las etiquetas salían al revés
+    elif CONTROLA[ea] == eb: rel_dm = f'{eb} controla a {ea}'
+    elif CONTROLA[eb] == ea: rel_dm = f'{ea} controla a {eb}'
     else: rel_dm = 'sin relación directa'
     return {'a': ca, 'b': cb, 'cruz': cruz, 'a_en_casas_de_b': en_casas_de_b, 'b_en_casas_de_a': en_casas_de_a,
             'bazi': {**sb, 'relacion_dias_maestros': rel_dm},
@@ -2231,4 +2232,4 @@ for _n in ('fase_luna', 'lunaciones_jd', 'proxima_fase', 'ingresos_y_estaciones'
            'eclipse_sol_local', 'eclipse_luna_siguiente', 'eclipse_luna_como', 'salida'):
     globals()[_n] = _con_ruta(globals()[_n])
 
-VERSION = "9.1"
+VERSION = "9.1.1"   # 24/11/2026: relación «controla» entre Días Maestros (sinastría) con las etiquetas bien
