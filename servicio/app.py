@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-app.py · «Eso que te da vueltas» · servicio HTTP · v0.3 (19/11/2026: suma /cielo y /tips-semana para «Web · al día»)
+app.py · «Eso que te da vueltas» · servicio HTTP · v0.4 (26/11/2026: suma /comentario, borradores para los comentarios de Instagram)
+(v0.3, 19/11/2026: suma /cielo y /tips-semana para «Web · al día»)
 
 Lo llama SOLO n8n, por la red interna de Docker (no tiene puerto afuera ni dirección en Traefik).
 - GET  /salud     → {ok, motor, efemerides}
@@ -153,6 +154,21 @@ def tips_guardado(x_pregunta_token: str | None = Header(default=None)):
         raise HTTPException(status_code=404)
     publico = {k: r[k] for k in ("semana", "publicar", "tips", "tecnica", "motor", "efemerides") if k in r}
     return publico
+
+
+class Comentario(BaseModel):
+    comentario: str = Field(max_length=2200)
+    pieza: str = Field(default="", max_length=2200)
+
+
+@app.post("/comentario")
+def comentario(c: Comentario, x_pregunta_token: str | None = Header(default=None)):
+    """Comentarios de Instagram (v0.4, 26/11/2026): un BORRADOR de respuesta. No publica nada: n8n lo deja
+    para el OK de Fabricio. No depende de PREGUNTA_ABIERTA ni de los topes de la pregunta gratis.
+    No recibe el usuario que comenta: el modelo no lo necesita."""
+    _autorizado(x_pregunta_token)
+    import comentarios
+    return comentarios.borrador(c.comentario, c.pieza)
 
 
 class AltaLunas(BaseModel):
