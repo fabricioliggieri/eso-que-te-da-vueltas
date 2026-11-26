@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-app.py · «Eso que te da vueltas» · servicio HTTP · v0.4 (26/11/2026: suma /comentario, borradores para los comentarios de Instagram)
+app.py · «Eso que te da vueltas» · servicio HTTP · v0.5 (26/11/2026: suma /mensaje, borradores para los mensajes directos de Instagram)
+(v0.4, 26/11/2026: suma /comentario, borradores para los comentarios de Instagram)
 (v0.3, 19/11/2026: suma /cielo y /tips-semana para «Web · al día»)
 
 Lo llama SOLO n8n, por la red interna de Docker (no tiene puerto afuera ni dirección en Traefik).
@@ -169,6 +170,24 @@ def comentario(c: Comentario, x_pregunta_token: str | None = Header(default=None
     _autorizado(x_pregunta_token)
     import comentarios
     return comentarios.borrador(c.comentario, c.pieza)
+
+
+class LineaMensaje(BaseModel):
+    de: str = Field(pattern=r"^(persona|brujo)$")
+    texto: str = Field(max_length=2000)
+
+
+class Conversacion(BaseModel):
+    conversacion: list[LineaMensaje] = Field(max_length=20)
+
+
+@app.post("/mensaje")
+def mensaje(c: Conversacion, x_pregunta_token: str | None = Header(default=None)):
+    """Mensajes directos de Instagram (v0.5, 26/11/2026): un BORRADOR de respuesta al último mensaje de la persona.
+    No manda nada: n8n lo deja para el OK de Fabricio. No recibe el usuario ni datos de la cuenta de la persona."""
+    _autorizado(x_pregunta_token)
+    import mensajes
+    return mensajes.borrador([m.model_dump() for m in c.conversacion])
 
 
 class AltaLunas(BaseModel):
